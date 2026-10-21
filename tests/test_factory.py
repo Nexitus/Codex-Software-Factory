@@ -18,6 +18,31 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaises(factory.FactoryFailure):
             factory.ensure_config(cfg)
 
+    def test_malformed_config_containers_fail_with_factory_error(self):
+        base = factory.read_json(factory.ROOT / 'factory.config.json')
+        cases = []
+        for field in ('providers', 'models', 'commands', 'skills'):
+            for value in (None, [], 'invalid'):
+                cfg = json.loads(json.dumps(base))
+                cfg[field] = value
+                cases.append((f'{field}={value!r}', cfg))
+        for label, mutate in (
+            ('provider value is an array', lambda cfg: cfg['providers'].__setitem__('planner', [])),
+            ('test command is null', lambda cfg: cfg['commands'].__setitem__('tests', None)),
+            ('test command is scalar', lambda cfg: cfg['commands'].__setitem__('tests', 'pytest')),
+            ('test argv is scalar', lambda cfg: cfg['commands'].__setitem__('tests', ['pytest'])),
+            ('test argv contains non-string', lambda cfg: cfg['commands'].__setitem__('tests', [['pytest', None]])),
+            ('skill enabled is not boolean', lambda cfg: cfg['skills'].__setitem__('enabled', 'false')),
+            ('skill budget is not integer', lambda cfg: cfg['skills'].__setitem__('max_per_invocation', None)),
+        ):
+            cfg = json.loads(json.dumps(base))
+            mutate(cfg)
+            cases.append((label, cfg))
+
+        for label, cfg in cases:
+            with self.subTest(case=label), self.assertRaises(factory.FactoryFailure):
+                factory.ensure_config(cfg)
+
     def test_fail_on_review_without_evidence(self):
         self.assertEqual(factory.review_blockers(
             {'security': {'verdict': 'fail', 'findings': [], 'checks': [], 'limitations': []}},

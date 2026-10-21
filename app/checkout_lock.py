@@ -28,14 +28,55 @@ def canonical_checkout(project: Path) -> Path:
     return Path(cp.stdout.strip()).resolve()
 
 
+def _confined_path(root: Path, path: Path, label: str) -> Path:
+    try:
+        resolved = path.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise CheckoutQuarantined(f"Cannot resolve checkout {label} path: {exc}") from exc
+    if not resolved.is_relative_to(root):
+        raise CheckoutQuarantined(f"The checkout {label} path resolves outside the checkout")
+    return resolved
+
+
+def confined_checkout_path(checkout: Path, path: Path, label: str) -> Path:
+    """Resolve a supervisor-owned path and reject it if it escapes the checkout."""
+    return _confined_path(checkout.resolve(strict=True), path, label)
+
+
+def preflight_checkout_state(checkout: Path, *, default_event_db: bool = True) -> None:
+    """Check every supervisor-owned target path before the first state write."""
+    root = checkout.resolve(strict=True)
+    factory_path = root / ".factory"
+    factory_dir = _confined_path(root, factory_path, ".factory")
+    if factory_path.exists() and not factory_path.is_dir():
+        raise CheckoutQuarantined("The checkout .factory path is not a directory")
+
+    runs_path = factory_dir / "runs"
+    _confined_path(root, runs_path, ".factory/runs")
+    if runs_path.exists() and not runs_path.is_dir():
+        raise CheckoutQuarantined("The checkout .factory/runs path is not a directory")
+
+    for name in ("active-run.json", "checkout.lock"):
+        path = factory_dir / name
+        _confined_path(root, path, f".factory/{name}")
+        if path.exists() and (path.is_symlink() or not path.is_file()):
+            raise CheckoutQuarantined(f"The checkout .factory/{name} path is not a regular file")
+
+    if default_event_db:
+        event_db = factory_dir / "dashboard.sqlite3"
+        _confined_path(root, event_db, ".factory/dashboard.sqlite3")
+        if event_db.exists() and (event_db.is_symlink() or not event_db.is_file()):
+            raise CheckoutQuarantined("The checkout .factory/dashboard.sqlite3 path is not a regular file")
+
+
 def _factory_dir(checkout: Path) -> Path:
     root = checkout.resolve(strict=True)
     candidate = root / ".factory"
+    _confined_path(root, candidate, ".factory")
+    if candidate.exists() and not candidate.is_dir():
+        raise CheckoutQuarantined("The checkout .factory path is not a directory")
     candidate.mkdir(parents=True, exist_ok=True)
-    resolved = candidate.resolve(strict=True)
-    if not resolved.is_relative_to(root):
-        raise CheckoutQuarantined("The checkout .factory path resolves outside the checkout")
-    return resolved
+    return _confined_path(root, candidate, ".factory")
 
 
 class CheckoutClaim:

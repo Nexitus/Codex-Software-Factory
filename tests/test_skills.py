@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 import sys
@@ -8,6 +9,32 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import skillctl
+from app.checkout_lock import CheckoutQuarantined
+
+
+def make_directory_junction(target: Path, link: Path) -> None:
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except OSError:
+        if sys.platform != 'win32':
+            raise
+        env = os.environ.copy()
+        env['FACTORY_TEST_LINK'] = str(link)
+        env['FACTORY_TEST_TARGET'] = str(target)
+        result = subprocess.run(
+            ['pwsh', '-NoLogo', '-NoProfile', '-Command',
+             'New-Item -ItemType Junction -Path $env:FACTORY_TEST_LINK -Target $env:FACTORY_TEST_TARGET | Out-Null'],
+            check=False, capture_output=True, text=True, env=env,
+        )
+        if result.returncode:
+            raise AssertionError(f'could not create Windows junction: {result.stderr}')
+
+
+def remove_directory_link(link: Path) -> None:
+    if link.is_symlink():
+        link.unlink()
+    elif link.exists():
+        link.rmdir()
 
 
 class SkillRegistryTests(unittest.TestCase):
@@ -101,6 +128,40 @@ class SkillRegistryTests(unittest.TestCase):
                 self.assertIn('Check acceptance criteria.',response)
                 with self.assertRaises(ValueError):
                     skillctl.install(project)
+
+    def test_installer_rejects_external_state_links_before_cloning_or_refresh_removal(self):
+        entry = {'id':'example','source':'local','path':'skills/example/SKILL.md','git_blob':'0'*40,
+                 'roles':['planner'],'phases':['plan'],'activation':'always','mode':'prompt'}
+        catalog = {'schema_version':1,'sources':{'local':{'repo':'test/local','url':'unused','branch':'main',
+                   'commit':'0'*40,'license':'MIT'}},'entries':[entry]}
+        for case in ('staging target', 'lock parent', 'refresh destination'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temp:
+                base = Path(temp)
+                project = base / 'project'
+                project.mkdir()
+                outside = base / 'outside'
+                outside.mkdir()
+                sentinel = outside / 'sentinel.txt'
+                sentinel.write_text('must remain unchanged', encoding='utf-8')
+                if case == 'staging target':
+                    (project / '.factory').mkdir()
+                    link = project / '.factory' / 'skills'
+                elif case == 'lock parent':
+                    link = project / 'skills'
+                else:
+                    (project / '.factory' / 'skills').mkdir(parents=True)
+                    link = project / '.factory' / 'skills' / 'example'
+                make_directory_junction(outside, link)
+                try:
+                    with patch.object(skillctl, 'load_registry', return_value=catalog), \
+                         patch.object(skillctl.subprocess, 'run') as run, \
+                         self.assertRaises(CheckoutQuarantined):
+                        skillctl.install(project, overwrite=case == 'refresh destination')
+                    run.assert_not_called()
+                    self.assertEqual(sentinel.read_text(encoding='utf-8'), 'must remain unchanged')
+                    self.assertEqual(sorted(p.name for p in outside.iterdir()), ['sentinel.txt'])
+                finally:
+                    remove_directory_link(link)
 
     def test_bad_git_blob_is_detected(self):
         self.assertEqual(skillctl.git_blob_id(b'hello\n'), 'ce013625030ba8dba906f756967f9e9ca394464a')

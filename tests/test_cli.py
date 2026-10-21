@@ -40,6 +40,24 @@ def valid_config(marker: str) -> dict:
     return config
 
 
+def make_directory_junction(target: Path, link: Path) -> None:
+    try:
+        os.symlink(target, link, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        junction_env = os.environ.copy()
+        junction_env["FACTORY_TEST_LINK"] = str(link)
+        junction_env["FACTORY_TEST_TARGET"] = str(target)
+        result = subprocess.run(
+            ["pwsh", "-NoLogo", "-NoProfile", "-Command",
+             "New-Item -ItemType Junction -Path $env:FACTORY_TEST_LINK -Target $env:FACTORY_TEST_TARGET | Out-Null"],
+            check=False, capture_output=True, text=True, env=junction_env,
+        )
+        if result.returncode:
+            raise AssertionError(f"could not create Windows junction: {result.stderr}")
+
+
 class CliRunTests(unittest.TestCase):
     def test_run_argument_boundaries(self):
         project = Path("chosen project")
@@ -129,6 +147,127 @@ class CliRunTests(unittest.TestCase):
             self.assertEqual(result, 2)
             self.assertIn("BLOCKED:", stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_malformed_nested_config_blocks_before_claim_and_next_run_succeeds(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            project = make_project(base / "invalid nested", valid_config("nested"))
+            bad_config = base / "bad-config.json"
+            bad_config.write_text(json.dumps({"providers": None}), encoding="utf-8")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), \
+                 patch.object(factory, "register_cli_run", wraps=factory.register_cli_run) as register:
+                result = factory.main([
+                    "--idea", "request", "--project", str(project), "--config", str(bad_config), "--dry-run",
+                ])
+            self.assertEqual(result, 2)
+            self.assertIn("BLOCKED:", stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            register.assert_not_called()
+            self.assertFalse((project / ".factory" / "active-run.json").exists())
+
+            with patch.object(factory, "do_work", return_value=0):
+                self.assertEqual(factory.main([
+                    "--idea", "valid request", "--project", str(project), "--dry-run",
+                ]), 0)
+            self.assertFalse((project / ".factory" / "active-run.json").exists())
+
+    def test_factory_junction_is_rejected_before_external_state_write(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            project = make_project(base / "junction target", valid_config("junction"))
+            outside = base / "external state"
+            outside.mkdir()
+            link = project / ".factory"
+            link_created = False
+            try:
+                make_directory_junction(outside, link)
+                link_created = True
+
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr), \
+                     patch.object(factory, "register_cli_run", wraps=factory.register_cli_run) as register:
+                    result_code = factory.main([
+                        "--idea", "safe request", "--project", str(project), "--dry-run",
+                    ])
+                self.assertEqual(result_code, 2)
+                self.assertIn("BLOCKED:", stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+                register.assert_not_called()
+                self.assertEqual(list(outside.iterdir()), [])
+                self.assertFalse((outside / "dashboard.sqlite3").exists())
+                self.assertFalse((link / "active-run.json").exists())
+
+                if link.is_symlink():
+                    link.unlink()
+                elif link.exists():
+                    link.rmdir()
+                link_created = False
+                with patch.object(factory, "do_work", return_value=0):
+                    self.assertEqual(factory.main([
+                        "--idea", "valid request", "--project", str(project), "--dry-run",
+                    ]), 0)
+                self.assertTrue((project / ".factory" / "dashboard.sqlite3").is_file())
+                self.assertFalse((project / ".factory" / "active-run.json").exists())
+            finally:
+                if link_created:
+                    if link.is_symlink():
+                        link.unlink()
+                    elif link.exists():
+                        link.rmdir()
+
+    def test_descendant_factory_state_escapes_are_rejected_before_registration(self):
+        for child in ("runs", "dashboard.sqlite3"):
+            with self.subTest(path=child), tempfile.TemporaryDirectory() as temp:
+                base = Path(temp)
+                project = make_project(base / "descendant target", valid_config(child))
+                factory_state = project / ".factory"
+                factory_state.mkdir()
+                outside = base / "external state"
+                outside.mkdir()
+                sentinel = outside / "sentinel.txt"
+                sentinel.write_text("must remain unchanged", encoding="utf-8")
+                link = factory_state / child
+                make_directory_junction(outside, link)
+
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr), \
+                     patch.object(factory, "register_cli_run", wraps=factory.register_cli_run) as register:
+                    result = factory.main([
+                        "--idea", "safe request", "--project", str(project), "--dry-run",
+                    ])
+                self.assertEqual(result, 2)
+                self.assertIn("BLOCKED:", stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+                register.assert_not_called()
+                self.assertEqual(sentinel.read_text(encoding="utf-8"), "must remain unchanged")
+                self.assertEqual(sorted(p.name for p in outside.iterdir()), ["sentinel.txt"])
+                self.assertFalse((factory_state / "active-run.json").exists())
+
+                if link.is_symlink():
+                    link.unlink()
+                elif link.exists():
+                    link.rmdir()
+                with patch.object(factory, "do_work", return_value=0):
+                    self.assertEqual(factory.main([
+                        "--idea", "valid request", "--project", str(project), "--dry-run",
+                    ]), 0)
+                self.assertTrue((project / ".factory" / "dashboard.sqlite3").is_file())
+                self.assertFalse((project / ".factory" / "active-run.json").exists())
+
+    def test_explicit_external_dashboard_database_remains_supported(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            project = make_project(base / "dashboard target", valid_config("handoff"))
+            external_db = base / "dashboard handoff" / "events.sqlite3"
+            with patch.object(factory, "do_work", return_value=0):
+                self.assertEqual(factory.main([
+                    "--idea", "dashboard request", "--project", str(project),
+                    "--event-db", str(external_db), "--dry-run",
+                ]), 0)
+            self.assertTrue(external_db.is_file())
+            self.assertFalse((project / ".factory" / "dashboard.sqlite3").exists())
+            self.assertFalse((project / ".factory" / "active-run.json").exists())
 
     def test_readonly_package_installation_uses_project_state(self):
         with tempfile.TemporaryDirectory() as temp:

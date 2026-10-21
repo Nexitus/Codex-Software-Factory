@@ -30,6 +30,7 @@ if __package__:
         CheckoutQuarantined,
         checkout_lock,
         claim_checkout,
+        preflight_checkout_state,
     )
     from .app.events import assert_no_orphaned_run, event_context, redact, register_cli_run
     from .app.events import emit as emit_event
@@ -42,6 +43,7 @@ else:
         CheckoutQuarantined,
         checkout_lock,
         claim_checkout,
+        preflight_checkout_state,
     )
     from app.events import assert_no_orphaned_run, event_context, redact, register_cli_run
     from app.events import emit as emit_event
@@ -235,13 +237,17 @@ def repo_status(cwd: Path) -> tuple[bool, str]:
 
 
 def ensure_config(config: dict, ui_hint: bool = False) -> None:
+    if not isinstance(config, dict):
+        raise FactoryFailure("factory.config.json must contain a JSON object")
     providers = config.get("providers", {})
     models = config.get("models", {})
+    if not isinstance(providers, dict) or not isinstance(models, dict):
+        raise FactoryFailure("providers and models must be objects mapping all eight roles to explicit choices")
     if set(providers) != set(ALL_ROLES) or set(models) != set(ALL_ROLES):
         raise FactoryFailure("Configure a provider and explicit model for all eight roles, including build_orchestrator")
     for role in ALL_ROLES:
         provider = providers[role]
-        if provider not in ALLOWED_MODELS:
+        if not isinstance(provider, str) or provider not in ALLOWED_MODELS:
             raise FactoryFailure(f"Unknown provider for {role}")
         tier = "orchestrator" if role in ORCHESTRATORS else "worker"
         model = models[role]
@@ -251,18 +257,36 @@ def ensure_config(config: dict, ui_hint: bool = False) -> None:
         raise FactoryFailure("required_gates must be a list of nonempty strings")
     if not isinstance(config.get("ui_required_gate"), str) or not config["ui_required_gate"]:
         raise FactoryFailure("ui_required_gate must name an executable gate")
+    commands = config.get("commands", {})
+    if not isinstance(commands, dict) or any(not isinstance(name, str) or not name for name in commands):
+        raise FactoryFailure("commands must be an object mapping gate names to argv arrays")
+    for gate, argv_sets in commands.items():
+        if not isinstance(argv_sets, list) or any(
+            not isinstance(argv, list) or not argv or any(not isinstance(arg, str) or not arg for arg in argv)
+            for argv in argv_sets
+        ):
+            raise FactoryFailure(f"Gate '{gate}' requires a list of nonempty string argv arrays in factory.config.json")
     required = list(config.get("required_gates", []))
     if not required or len(required) != len(set(required)):
         raise FactoryFailure("Set unique required_gates explicitly; zero gates is unsafe")
     if ui_hint and config.get("ui_required_gate") not in required:
         required.append(config["ui_required_gate"])
     for gate in required:
-        commands = config.get("commands", {}).get(gate)
-        if not isinstance(commands, list) or not commands or any(not isinstance(x, list) or not x or not all(isinstance(y, str) and y for y in x) for x in commands):
+        gate_commands = commands.get(gate)
+        if not gate_commands:
             raise FactoryFailure(f"Gate '{gate}' requires a nonempty list of argv arrays in factory.config.json")
         if any(Path(argv[0]).name.lower() in {"true", "true.exe", "false", "false.exe", ":", "echo", "echo.exe"}
-               for argv in commands):
+               for argv in gate_commands):
             raise FactoryFailure(f"Gate '{gate}' contains a no-op placeholder instead of a verification command")
+    skills = config.get("skills", {})
+    if not isinstance(skills, dict):
+        raise FactoryFailure("skills must be an object")
+    if "enabled" in skills and not isinstance(skills["enabled"], bool):
+        raise FactoryFailure("skills.enabled must be a boolean")
+    for name, low, high in (("max_per_invocation", 1, 8), ("max_chars_per_skill", 1000, 40000)):
+        value = skills.get(name, 4 if name == "max_per_invocation" else 10000)
+        if type(value) is not int or not low <= value <= high:
+            raise FactoryFailure(f"skills.{name} must be between {low} and {high}")
     for name, low, high in (("max_agent_seconds", 1, 3600), ("max_gate_seconds", 1, 1800), ("claude_max_turns", 1, 200)):
         value = config.get(name)
         if type(value) is not int or not (low <= value <= high):
@@ -270,7 +294,7 @@ def ensure_config(config: dict, ui_hint: bool = False) -> None:
     budget = config.get("claude_budget_usd_per_call")
     if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not (0 < budget <= 100):
         raise FactoryFailure("claude_budget_usd_per_call must be a positive finite budget <= 100")
-    if not isinstance(config.get("max_review_rounds"), int) or not (1 <= config["max_review_rounds"] <= 8):
+    if type(config.get("max_review_rounds")) is not int or not (1 <= config["max_review_rounds"] <= 8):
         raise FactoryFailure("max_review_rounds must be between 1 and 8")
 
 
@@ -688,19 +712,27 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("provide exactly one of a spec file or --idea")
     if args.publish_pr and args.dry_run:
         parser.error("--dry-run and --publish-pr cannot be combined")
-    project = args.project.resolve()
     try:
+        project = args.project.resolve()
         project = canonical_checkout(project)
-    except (OSError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         print(f"BLOCKED: {exc}", file=sys.stderr)
         return 2
-    config_path = (args.config or project / "factory.config.json").resolve()
     try:
+        config_path = (args.config or project / "factory.config.json").resolve()
         cfg = read_json(config_path)
-        if not isinstance(cfg, dict):
-            raise ValueError("configuration root must be a JSON object")
-    except (OSError, ValueError) as exc:
-        print(f"BLOCKED: cannot read configuration {config_path}: {exc}", file=sys.stderr)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"BLOCKED: cannot read configuration {args.config or project / 'factory.config.json'}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        ensure_config(cfg)
+    except FactoryFailure as exc:
+        print(f"BLOCKED: invalid configuration {config_path}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        preflight_checkout_state(project, default_event_db=args.event_db is None)
+    except (CheckoutQuarantined, OSError, RuntimeError, ValueError) as exc:
+        print(f"BLOCKED: {str(redact(str(exc)))[:1000]}", file=sys.stderr)
         return 2
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     run_dir = project / ".factory" / "runs" / stamp
@@ -712,7 +744,7 @@ def main(argv: list[str] | None = None) -> int:
         requirement = args.idea.strip() if args.idea else args.spec.resolve().read_text(encoding="utf-8") if args.spec and args.spec.exists() else ""
         register_cli_run(event_db.resolve(), run_id, project, requirement, os.getpid(), process_birth(os.getpid()),
                          args.queue_token, require_handoff=bool(args.run_id))
-    except (OSError, ValueError, sqlite3.Error):
+    except (OSError, RuntimeError, ValueError, sqlite3.Error):
         print("BLOCKED: durable run event storage is unavailable", file=sys.stderr)
         return 2
     try:

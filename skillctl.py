@@ -14,12 +14,50 @@ import shutil
 import subprocess
 import tempfile
 
+if __package__:
+    from .app.checkout_lock import CheckoutQuarantined, confined_checkout_path
+else:
+    from app.checkout_lock import CheckoutQuarantined, confined_checkout_path
+
 HERE = Path(__file__).resolve().parent
 CATALOG = HERE / 'skills' / 'registry.json'
 
 
 def lock_path(project: Path) -> Path:
     return Path(project) / 'skills' / 'lock.json'
+
+
+def _check_install_paths(project: Path, entries: list[dict], overwrite: bool) -> None:
+    factory_dir = project / '.factory'
+    confined_checkout_path(project, factory_dir, '.factory')
+    if factory_dir.exists() and not factory_dir.is_dir():
+        raise CheckoutQuarantined('The checkout .factory path is not a directory')
+    target = factory_dir / 'skills'
+    confined_checkout_path(project, target, '.factory/skills')
+    if target.exists() and not target.is_dir():
+        raise CheckoutQuarantined('The checkout .factory/skills path is not a directory')
+
+    governance_dir = project / 'skills'
+    confined_checkout_path(project, governance_dir, 'skills')
+    if governance_dir.exists() and not governance_dir.is_dir():
+        raise CheckoutQuarantined('The checkout skills lock parent is not a directory')
+    lock = lock_path(project)
+    confined_checkout_path(project, lock, 'skills/lock.json')
+    if lock.is_symlink() or (lock.exists() and not lock.is_file()):
+        raise CheckoutQuarantined('The checkout skills/lock.json path is not a regular file')
+
+    for entry in entries:
+        dest = target / entry['id']
+        confined_checkout_path(project, dest, f".factory/skills/{entry['id']}")
+        if not dest.exists():
+            continue
+        if dest.is_symlink() or not dest.is_dir():
+            raise CheckoutQuarantined(f"Staged skill destination is not a regular directory: {dest}")
+        if overwrite:
+            for child in dest.rglob('*'):
+                confined_checkout_path(project, child, f"staged skill path {child}")
+                if child.is_symlink():
+                    raise CheckoutQuarantined(f"Staged skill contains a symlink: {child}")
 
 
 def load_registry() -> dict:
@@ -127,13 +165,17 @@ def get_skill_context(role: str, phase: str, payload: dict, project: Path, confi
 def install(project: Path, overwrite: bool = False) -> None:
     """Stage reproducible skill trees in target project; lock entire staged tree in governance."""
     cat = load_registry()
-    project = project.resolve()
+    project = project.resolve(strict=True)
+    eligible = [e for e in cat['entries'] if e['mode'] == 'prompt']
+    _check_install_paths(project, eligible, overwrite)
     lock = lock_path(project)
     if lock.exists() and not overwrite:
         raise ValueError('skills/lock.json exists; explicitly use --refresh to replace it')
     target = project / '.factory' / 'skills'
+    if not overwrite and any((target / entry['id']).exists() for entry in eligible):
+        raise ValueError('Staged skill already exists; explicitly use --refresh to replace it')
+    confined_checkout_path(project, target, '.factory/skills')
     target.mkdir(parents=True, exist_ok=True)
-    eligible = [e for e in cat['entries'] if e['mode'] == 'prompt']
     locks = {}
     with tempfile.TemporaryDirectory(prefix='software-factory-skills-') as temp:
         clones = {}
@@ -163,6 +205,7 @@ def install(project: Path, overwrite: bool = False) -> None:
             if dest.exists():
                 if not overwrite:
                     raise ValueError('Staged skill already exists: '+e['id'])
+                _check_install_paths(project, [e], overwrite)
                 shutil.rmtree(dest)
             # Some skills live at nonstandard `skill.md` paths. Copy the file only
             # for Graphify: its parent is the entire Python package, not skill assets.
@@ -175,7 +218,11 @@ def install(project: Path, overwrite: bool = False) -> None:
             if repo_license.is_file() and not (dest / 'UPSTREAM_LICENSE').exists():
                 shutil.copy2(repo_license, dest / 'UPSTREAM_LICENSE')
             locks[e['id']] = {'source':e['source'],'git_blob':e['git_blob'],'main_file':source_path.name,'digest':digest_tree(dest)}
+    confined_checkout_path(project, lock.parent, 'skills')
     lock.parent.mkdir(parents=True, exist_ok=True)
+    confined_checkout_path(project, lock, 'skills/lock.json')
+    if lock.is_symlink():
+        raise CheckoutQuarantined('The checkout skills/lock.json path is a symlink')
     lock.write_text(json.dumps({'schema_version':1,'sources':cat['sources'],'skills':locks},indent=2)+'\n', encoding='utf-8')
     print(f'Installed {len(locks)} pinned skill trees in {target}. Commit skills/lock.json; then set skills.enabled=true and commit config.')
 
@@ -204,7 +251,7 @@ def main():
                     if item['git_blob'] != e['git_blob'] or digest_tree(folder) != item['digest']:
                         raise ValueError('Invalid or missing installed skill '+e['id'])
             print('Pinned skill manifests and installed trees verified')
-    except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as exc:
+    except (ValueError, KeyError, OSError, subprocess.CalledProcessError, CheckoutQuarantined) as exc:
         parser.exit(2,'ERROR: '+str(exc)+'\n')
 
 if __name__=='__main__':
