@@ -395,6 +395,39 @@ class CliDoctorStatusTests(unittest.TestCase):
             self.assertIsNotNone(error)
             self.assertEqual(existing.read_text(encoding="utf-8"), "owned by another process")
 
+    def test_doctor_checks_existing_database_and_lock_writability(self):
+        for state_name in ("dashboard.sqlite3", "checkout.lock"):
+            with self.subTest(state_name=state_name), tempfile.TemporaryDirectory() as temp:
+                project = make_project(Path(temp) / "consumer", valid_config(f"readonly-{state_name}"))
+                state_dir = project / ".factory"
+                state_dir.mkdir()
+                state_path = state_dir / state_name
+                if state_name == "dashboard.sqlite3":
+                    register_cli_run(state_path, "existing", project, "existing", os.getpid(), None)
+                else:
+                    state_path.write_bytes(b"\x00")
+
+                path_type = type(state_path)
+                original_open = path_type.open
+
+                def deny_readwrite(path, mode="r", *args, _state_path=state_path,
+                                   _original_open=original_open, **kwargs):
+                    if path == _state_path and mode == "r+b":
+                        raise PermissionError("read-only test state")
+                    return _original_open(path, mode, *args, **kwargs)
+
+                output = io.StringIO()
+                with patch.object(path_type, "open", autospec=True, side_effect=deny_readwrite), \
+                     patch.object(cli.shutil, "which", return_value="available"), \
+                     contextlib.redirect_stdout(output):
+                    blocked = cli.doctor(project)
+                self.assertEqual(blocked, 2)
+                self.assertIn(state_name, output.getvalue())
+                self.assertIn("writable", output.getvalue().lower())
+
+                with patch.object(cli.shutil, "which", return_value="available"):
+                    self.assertEqual(cli.doctor(project), 0)
+
     def test_doctor_rejects_external_state_link_without_writing_outside(self):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
@@ -572,7 +605,12 @@ class CliDoctorStatusTests(unittest.TestCase):
                 elif name == "preflight":
                     run_dir = project / ".factory" / "runs" / supervisor_id
                     run_dir.mkdir(parents=True, exist_ok=True)
-                    (run_dir / "dry-run.json").write_text("{}", encoding="utf-8")
+                    dry_run = {
+                        "planned_roles": ["planner", "build_orchestrator", "builder"],
+                        "required_gates": ["lint", "tests"],
+                        "note": "No agents or gate commands were executed",
+                    }
+                    (run_dir / "dry-run.json").write_text(json.dumps(dry_run), encoding="utf-8")
 
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
@@ -581,6 +619,50 @@ class CliDoctorStatusTests(unittest.TestCase):
                 self.assertEqual(result, expected_code)
                 self.assertIn(f"State: {expected_state}", output.getvalue())
                 self.assertIn(run_id, output.getvalue())
+
+    def test_status_rejects_verified_event_from_different_supervisor_run(self):
+        with tempfile.TemporaryDirectory() as temp:
+            project = make_project(Path(temp) / "consumer", valid_config("mismatched-verification"))
+            selected_supervisor = "20261021T100100000000Z"
+            other_supervisor = "20261021T095900000000Z"
+            add_event_run(
+                project, "current-run", selected_supervisor,
+                [("run_started", {"supervisor_run_id": selected_supervisor}),
+                 ("delivery_verified", {"supervisor_run_id": other_supervisor,
+                                         "delivery_status": "verified_candidate"}),
+                 ("run_completed", {"delivery_status": "verified_candidate"})],
+                {"status": "verified_candidate"},
+            )
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = cli.status(project)
+
+            self.assertEqual(result, 2)
+            self.assertIn("State: malformed", output.getvalue())
+            self.assertIn("supervisor run ID", output.getvalue())
+            self.assertNotIn("State: verified candidate", output.getvalue())
+
+    def test_status_rejects_malformed_event_backed_preflight_artifact(self):
+        with tempfile.TemporaryDirectory() as temp:
+            project = make_project(Path(temp) / "consumer", valid_config("malformed-preflight"))
+            supervisor_id = "preflight-run"
+            database = project / ".factory" / "dashboard.sqlite3"
+            register_cli_run(database, "malformed-preflight", project, "malformed-preflight", os.getpid(), None)
+            with event_context(database, "malformed-preflight"):
+                emit_event("run_started", {"supervisor_run_id": supervisor_id})
+                emit_event("run_completed", {"delivery_status": "dry_run"})
+            run_dir = project / ".factory" / "runs" / supervisor_id
+            run_dir.mkdir(parents=True)
+            (run_dir / "dry-run.json").write_text("{}", encoding="utf-8")
+
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = cli.status(project)
+
+            self.assertEqual(result, 2)
+            self.assertIn("State: malformed", output.getvalue())
+            self.assertIn("dry-run.json", output.getvalue())
 
     def test_status_conflicting_events_never_report_verified(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -47,6 +47,15 @@ def _probe_state(project: Path) -> str | None:
             probe = directory / f".doctor-probe-{uuid.uuid4().hex}"
             with probe.open("x", encoding="utf-8"):
                 probes.append(probe)
+        for path in (state_dir / "dashboard.sqlite3", state_dir / "checkout.lock"):
+            if path.exists():
+                if path.is_symlink() or not path.resolve(strict=True).is_relative_to(project):
+                    raise OSError(f"Existing {path.name} state path resolves outside the checkout")
+                try:
+                    with path.open("r+b"):
+                        pass
+                except OSError as exc:
+                    raise OSError(f"Existing {path.name} is not writable: {exc}") from exc
     except (OSError, RuntimeError, ValueError) as exc:
         error = str(exc)
     finally:
@@ -159,6 +168,14 @@ def _print_status(run_id: str, state: str, evidence: Path | None, detail: str | 
     return result
 
 
+def _valid_dry_run(report: dict | None) -> bool:
+    return (isinstance(report, dict) and isinstance(report.get("planned_roles"), list) and
+            all(isinstance(role, str) for role in report["planned_roles"]) and
+            isinstance(report.get("required_gates"), list) and
+            all(isinstance(gate, str) for gate in report["required_gates"]) and
+            isinstance(report.get("note"), str))
+
+
 def _legacy_status(project: Path) -> int:
     runs_root = project / ".factory" / "runs"
     try:
@@ -193,11 +210,7 @@ def _legacy_status(project: Path) -> int:
         if delivery is not None or error_report is not None:
             return _print_status(supervisor_id, "malformed", dry_path,
                                  "preflight artifact conflicts with delivery or error report", 2)
-        if (not isinstance(dry_run.get("planned_roles"), list) or
-                not all(isinstance(role, str) for role in dry_run["planned_roles"]) or
-                not isinstance(dry_run.get("required_gates"), list) or
-                not all(isinstance(gate, str) for gate in dry_run["required_gates"]) or
-                not isinstance(dry_run.get("note"), str)):
+        if not _valid_dry_run(dry_run):
             return _print_status(supervisor_id, "malformed", dry_path,
                                  "preflight artifact does not match the supervisor report shape", 2)
         return _print_status(supervisor_id, "preflight", dry_path)
@@ -274,7 +287,12 @@ def status(project: Path) -> int:
     if run["status"] not in (projected["status"], "starting" if projected["status"] == "queued" else None):
         return _print_status(run["id"], "malformed", database, "event history conflicts with the stored run state", 2)
 
-    supervisor_id = run.get("supervisor_run_id") or projected.get("supervisor_run_id")
+    row_supervisor_id = run.get("supervisor_run_id")
+    event_supervisor_id = projected.get("supervisor_run_id")
+    if row_supervisor_id and event_supervisor_id and row_supervisor_id != event_supervisor_id:
+        return _print_status(run["id"], "malformed", database,
+                             "stored and projected supervisor run IDs conflict", 2)
+    supervisor_id = row_supervisor_id or event_supervisor_id
     if supervisor_id is not None and not isinstance(supervisor_id, str):
         return _print_status(run["id"], "malformed", database, "invalid supervisor run ID", 2)
     try:
@@ -314,6 +332,12 @@ def status(project: Path) -> int:
         if not delivery_events or projected.get("delivery_status") != "verified_candidate":
             return _print_status(run["id"], "malformed", delivery_path,
                                  "candidate report has no matching delivery_verified event", 2)
+        started_ids = [event["data"].get("supervisor_run_id") for event in events
+                       if event["type"] == "run_started"]
+        if (not supervisor_id or not started_ids or any(value != supervisor_id for value in started_ids) or
+                any(event["data"].get("supervisor_run_id") != supervisor_id for event in delivery_events)):
+            return _print_status(run["id"], "malformed", delivery_path,
+                                 "verification event references a different supervisor run ID", 2)
         return _print_status(run["id"], "verified candidate", delivery_path)
     if delivery is not None and delivery.get("status") == "blocked":
         if projected.get("status") != "blocked":
@@ -337,6 +361,9 @@ def status(project: Path) -> int:
         if dry_run is None:
             return _print_status(run["id"], "missing evidence", dry_path,
                                  "preflight event has no dry-run.json", 2)
+        if not _valid_dry_run(dry_run):
+            return _print_status(run["id"], "malformed", dry_path,
+                                 "preflight artifact does not match the supervisor report shape", 2)
         return _print_status(run["id"], "preflight", dry_path)
     if projected.get("status") == "running":
         return _print_status(run["id"], "running", evidence)
