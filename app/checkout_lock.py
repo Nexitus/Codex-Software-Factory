@@ -22,7 +22,7 @@ class CheckoutQuarantined(RuntimeError):
 
 
 def canonical_checkout(project: Path) -> Path:
-    cp = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=project, capture_output=True, text=True, check=False)
+    cp = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=project, capture_output=True, text=True, encoding="utf-8", check=False)
     if cp.returncode:
         raise ValueError("Project must be a Git checkout")
     return Path(cp.stdout.strip()).resolve()

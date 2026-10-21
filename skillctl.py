@@ -16,7 +16,10 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 CATALOG = HERE / 'skills' / 'registry.json'
-LOCK = HERE / 'skills' / 'lock.json'
+
+
+def lock_path(project: Path) -> Path:
+    return Path(project) / 'skills' / 'lock.json'
 
 
 def load_registry() -> dict:
@@ -87,9 +90,10 @@ def get_skill_context(role: str, phase: str, payload: dict, project: Path, confi
         raise ValueError(f'{role}/{phase}: {len(entries)} skills exceed per-invocation budget of {max_skills}')
     if not entries:
         return ''
-    if not LOCK.is_file():
+    lock = lock_path(project)
+    if not lock.is_file():
         raise ValueError('Missing skills/lock.json. Run python skillctl.py install and commit the lock file.')
-    locked = json.loads(LOCK.read_text(encoding='utf-8'))
+    locked = json.loads(lock.read_text(encoding='utf-8'))
     if locked.get('sources') != load_registry()['sources']:
         raise ValueError('Skill source pin mismatch; stage approved versions again')
     pieces = []
@@ -123,9 +127,10 @@ def get_skill_context(role: str, phase: str, payload: dict, project: Path, confi
 def install(project: Path, overwrite: bool = False) -> None:
     """Stage reproducible skill trees in target project; lock entire staged tree in governance."""
     cat = load_registry()
-    if LOCK.exists() and not overwrite:
-        raise ValueError('skills/lock.json exists; explicitly use --refresh to replace it')
     project = project.resolve()
+    lock = lock_path(project)
+    if lock.exists() and not overwrite:
+        raise ValueError('skills/lock.json exists; explicitly use --refresh to replace it')
     target = project / '.factory' / 'skills'
     target.mkdir(parents=True, exist_ok=True)
     eligible = [e for e in cat['entries'] if e['mode'] == 'prompt']
@@ -170,15 +175,15 @@ def install(project: Path, overwrite: bool = False) -> None:
             if repo_license.is_file() and not (dest / 'UPSTREAM_LICENSE').exists():
                 shutil.copy2(repo_license, dest / 'UPSTREAM_LICENSE')
             locks[e['id']] = {'source':e['source'],'git_blob':e['git_blob'],'main_file':source_path.name,'digest':digest_tree(dest)}
-    LOCK.parent.mkdir(parents=True, exist_ok=True)
-    LOCK.write_text(json.dumps({'schema_version':1,'sources':cat['sources'],'skills':locks},indent=2)+'\n', encoding='utf-8')
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text(json.dumps({'schema_version':1,'sources':cat['sources'],'skills':locks},indent=2)+'\n', encoding='utf-8')
     print(f'Installed {len(locks)} pinned skill trees in {target}. Commit skills/lock.json; then set skills.enabled=true and commit config.')
 
 
 def main():
     parser = argparse.ArgumentParser(description='Manage pinned agent skill sources; does not execute upstream code')
     parser.add_argument('action', choices=['list','install','validate'])
-    parser.add_argument('--project',type=Path,default=HERE)
+    parser.add_argument('--project',type=Path,default=Path.cwd())
     parser.add_argument('--refresh',action='store_true')
     args=parser.parse_args()
     try:
@@ -189,7 +194,7 @@ def main():
         elif args.action=='install':
             install(args.project,args.refresh)
         else:
-            lock=json.loads(LOCK.read_text())
+            lock=json.loads(lock_path(args.project.resolve()).read_text(encoding='utf-8'))
             if lock['sources'] != cat['sources']:
                 raise ValueError('Source lock mismatch')
             for e in cat['entries']:

@@ -17,7 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 
 from app import server
-from app.checkout_lock import CheckoutClaim, CheckoutQuarantined, checkout_lock, claim_checkout
+from app.checkout_lock import CheckoutClaim, CheckoutQuarantined, canonical_checkout, checkout_lock, claim_checkout
 from app.events import (add_event, assert_no_orphaned_run, connect, emit, event_context,
                        events_for, initialize, redact, register_cli_run)
 from app.process_guard import process_birth, process_matches
@@ -29,6 +29,13 @@ def make_project(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
     return path
+
+
+class CheckoutPathTests(unittest.TestCase):
+    def test_canonical_checkout_preserves_unicode_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            project = make_project(Path(temp) / "consumer project \u96ea")
+            self.assertEqual(canonical_checkout(project), project.resolve())
 
 
 def insert_run(db_path: Path, project: Path, *, run_id: str = "run-1", status: str = "running",

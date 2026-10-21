@@ -22,6 +22,22 @@ else:
 
 
 def main(argv: list[str] | None = None) -> int:
+    cli_args = list(sys.argv[1:] if argv is None else argv)
+    if cli_args[:1] == ["run"]:
+        supervisor_args = cli_args[1:]
+        if supervisor_args[:1] == ["--"]:
+            supervisor_args = supervisor_args[1:]
+        try:
+            if __package__:
+                from . import factory
+            else:
+                import factory
+            return factory.main(supervisor_args)
+        except SystemExit as error:
+            return int(error.code or 0)
+        except (ImportError, OSError, ValueError) as error:
+            print(f"software-factory run: BLOCKED: {error}", file=sys.stderr)
+            return 2
     parser = argparse.ArgumentParser(
         prog="software-factory",
         description="Command-line interface for Codex Software Factory.",
@@ -32,7 +48,8 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--project", type=Path, default=Path.cwd(), help="checkout to initialize")
     init.add_argument("--harness", choices=ALL_HARNESSES, action="append",
                       help="install a selected host skill (repeatable; defaults to all)")
-    args = parser.parse_args(argv)
+    commands.add_parser("run", help="run the supervised workflow")
+    args = parser.parse_args(cli_args)
     if args.command == "init":
         try:
             written = initialize(args.project, args.harness or list(ALL_HARNESSES))

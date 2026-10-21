@@ -201,18 +201,22 @@ def source_fingerprint(project: Path) -> str:
 def protected_snapshot(project: Path) -> dict[str, str]:
     """Fail closed if an agent changes orchestration, policy, or role definitions."""
     snap = {}
-    for rel in PROTECTED:
-        item = project / rel
-        if item.is_symlink():
-            raise FactoryFailure(f"Protected path is a symlink: {rel}")
-        if item.is_file():
-            snap[rel] = hashlib.sha256(item.read_bytes()).hexdigest()
-        elif item.is_dir():
-            for child in sorted(item.rglob("*")):
-                if child.is_symlink():
-                    raise FactoryFailure(f"Protected path contains symlink: {child}")
-                if child.is_file():
-                    snap[str(child.relative_to(project))] = hashlib.sha256(child.read_bytes()).hexdigest()
+    roots = [(project, "")]
+    if project.resolve() != ROOT.resolve():
+        roots.append((ROOT, "runtime/"))
+    for root, prefix in roots:
+        for rel in PROTECTED:
+            item = root / rel
+            if item.is_symlink():
+                raise FactoryFailure(f"Protected path is a symlink: {prefix}{rel}")
+            if item.is_file():
+                snap[prefix + rel] = hashlib.sha256(item.read_bytes()).hexdigest()
+            elif item.is_dir():
+                for child in sorted(item.rglob("*")):
+                    if child.is_symlink():
+                        raise FactoryFailure(f"Protected path contains symlink: {child}")
+                    if child.is_file():
+                        snap[prefix + str(child.relative_to(root))] = hashlib.sha256(child.read_bytes()).hexdigest()
     return snap
 
 
@@ -417,7 +421,7 @@ def _execute_agent(role: str, phase: str, payload: dict, config: dict, cwd: Path
     (out_dir / "command.txt").write_text(f"provider={provider} model={model} role={role} phase={phase} mutating={is_mutating}\n", encoding="utf-8")
     started = time.monotonic()
     try:
-        cp = subprocess.run(cmd, input=prompt if provider == "codex" else None, capture_output=True, text=True, cwd=cwd,
+        cp = subprocess.run(cmd, input=prompt if provider == "codex" else None, capture_output=True, text=True, encoding="utf-8", cwd=cwd,
                             timeout=int(config.get("max_agent_seconds", 1200)))
     except subprocess.TimeoutExpired as exc:
         raise AgentTimedOut(f"{role}/{phase} provider timed out") from exc
@@ -656,21 +660,28 @@ def publish_pr(project: Path, run_dir: Path, base: str) -> None:
     print(f"PULL REQUEST: {cp.stdout.strip()}")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="backslashreplace")
+            except (OSError, ValueError):
+                pass
     parser = argparse.ArgumentParser(description="Human spec in; verified code candidate or blocked report out")
     parser.add_argument("spec", type=Path, nargs="?", help="Requirements Markdown file")
     parser.add_argument("--idea", help="Natural-language feature request (no separate spec needed)")
     parser.add_argument("--publish-pr", action="store_true", help="Opt in to creating and pushing a branch and opening a GitHub PR after all gates pass")
     parser.add_argument("--base", default="main", help="Base branch for --publish-pr; default main")
     parser.add_argument("--project", type=Path, default=Path.cwd(), help="Target Git repository root")
-    parser.add_argument("--config", type=Path, default=ROOT / "factory.config.json")
+    parser.add_argument("--config", type=Path, help="Configuration file; defaults to <project>/factory.config.json")
     parser.add_argument("--dry-run", action="store_true", help="Preflight only: do not invoke models or run gates")
     parser.add_argument("--event-db", type=Path, default=Path(os.environ["FACTORY_EVENT_DB"]) if os.environ.get("FACTORY_EVENT_DB") else None,
                         help="Optional SQLite event database for incremental run instrumentation")
     parser.add_argument("--run-id", default=os.environ.get("FACTORY_RUN_ID"), help="Optional stable run ID for event instrumentation")
     parser.add_argument("--queue-token", default=os.environ.get("FACTORY_QUEUE_TOKEN"), help=argparse.SUPPRESS)
     parser.add_argument("--wait-for-lock", action="store_true", help=argparse.SUPPRESS)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.idea is not None and not args.idea.strip():
         parser.error("--idea must not be empty")
     if bool(args.spec) == bool(args.idea):
@@ -680,16 +691,23 @@ def main() -> int:
     project = args.project.resolve()
     try:
         project = canonical_checkout(project)
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         print(f"BLOCKED: {exc}", file=sys.stderr)
         return 2
-    cfg = read_json(args.config.resolve())
+    config_path = (args.config or project / "factory.config.json").resolve()
+    try:
+        cfg = read_json(config_path)
+        if not isinstance(cfg, dict):
+            raise ValueError("configuration root must be a JSON object")
+    except (OSError, ValueError) as exc:
+        print(f"BLOCKED: cannot read configuration {config_path}: {exc}", file=sys.stderr)
+        return 2
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     run_dir = project / ".factory" / "runs" / stamp
     if args.run_id and not args.queue_token:
         parser.error("--run-id is reserved for authenticated dashboard handoffs")
     run_id = args.run_id or str(uuid.uuid4())
-    event_db = args.event_db or ROOT / ".factory" / "dashboard.sqlite3"
+    event_db = args.event_db or project / ".factory" / "dashboard.sqlite3"
     try:
         requirement = args.idea.strip() if args.idea else args.spec.resolve().read_text(encoding="utf-8") if args.spec and args.spec.exists() else ""
         register_cli_run(event_db.resolve(), run_id, project, requirement, os.getpid(), process_birth(os.getpid()),
@@ -723,7 +741,7 @@ def main() -> int:
                         if not run_safety.is_set():
                             claim.release_after_worker_exit()
                         return outcome
-                    except (FactoryFailure, FileNotFoundError, json.JSONDecodeError) as exc:
+                    except (FactoryFailure, OSError, json.JSONDecodeError) as exc:
                         run_dir.mkdir(parents=True, exist_ok=True)
                         safe_error = str(redact(str(exc)))[:1000]
                         dump(run_dir / "ERROR.json", {"status": "blocked", "error_type": type(exc).__name__,
@@ -735,7 +753,7 @@ def main() -> int:
                             claim.release_after_worker_exit()
                         print(f"BLOCKED: {safe_error}\nDETAILS: {run_dir / 'ERROR.json'}", file=sys.stderr)
                         return 2
-            except (CheckoutBusy, CheckoutQuarantined, RuntimeError) as exc:
+            except (CheckoutBusy, CheckoutQuarantined, RuntimeError, OSError) as exc:
                 emit_event("run_blocked", {"reason": "checkout_unavailable", "error_type": type(exc).__name__})
                 emit_event("run_completed", {"delivery_status": "blocked"})
                 print(f"BLOCKED: {str(redact(str(exc)))[:1000]}", file=sys.stderr)

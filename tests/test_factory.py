@@ -61,6 +61,81 @@ class PolicyTests(unittest.TestCase):
             with self.assertRaises(factory.FactoryFailure):
                 factory.assert_protected(root, original, head)
 
+    def test_installed_supervisor_runtime_mutation_fails(self):
+        with tempfile.TemporaryDirectory() as t:
+            base = Path(t)
+            runtime = base / 'runtime'
+            runtime.mkdir()
+            supervisor = runtime / 'factory.py'
+            supervisor.write_text('approved supervisor', encoding='utf-8')
+            project = base / 'project'
+            project.mkdir()
+            subprocess.run(['git', 'init', '-q'], cwd=project, check=True)
+            (project / 'AGENTS.md').write_text('target policy', encoding='utf-8')
+            subprocess.run(['git', 'add', '.'], cwd=project, check=True)
+            subprocess.run(['git', '-c', 'user.name=Mock', '-c', 'user.email=mock@example.test',
+                            'commit', '-qm', 'base'], cwd=project, check=True)
+            head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=project, capture_output=True,
+                                  text=True, check=True).stdout.strip()
+            with patch.object(factory, 'ROOT', runtime):
+                original = factory.protected_snapshot(project)
+                supervisor.write_text('tampered supervisor', encoding='utf-8')
+                with self.assertRaises(factory.FactoryFailure):
+                    factory.assert_protected(project, original, head)
+
+    def test_agent_prompt_uses_utf8_with_legacy_host_encoding(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            out_dir = root / 'run'
+            payload = {'request': 'Unicode request: snow 雪 and café'}
+            config = {
+                'providers': {'planner': 'codex'},
+                'models': {'planner': 'gpt-6-luna'},
+                'max_agent_seconds': 30,
+                'skills': {'enabled': False},
+            }
+            real_run = subprocess.run
+
+            def codex_stub(cmd, **kwargs):
+                self.assertTrue(kwargs['text'])
+                self.assertEqual(kwargs.get('encoding'), 'utf-8')
+                response = cmd[cmd.index('--output-last-message') + 1]
+                received_prompt = out_dir / 'received-prompt.txt'
+                result = {
+                    'summary': 'UTF-8 prompt received', 'ui_change': False,
+                    'acceptance_criteria': [{'id': 'A1', 'description': 'Prompt received', 'verification': 'Check captured input'}],
+                    'work_items': [{'id': 'W1', 'description': 'Read prompt', 'verification': 'Return structured result'}],
+                    'assumptions': [], 'risks': [],
+                }
+                script = (
+                    'import json,sys; '
+                    'prompt=sys.stdin.buffer.read().decode("utf-8"); '
+                    'open(sys.argv[1],"w",encoding="utf-8").write(prompt); '
+                    'json.dump(' + repr(result) + ',open(sys.argv[2],"w",encoding="utf-8"))'
+                )
+                child_env = os.environ.copy()
+                child_env.update({'PYTHONIOENCODING': 'cp1252', 'PYTHONUTF8': '0'})
+                child = real_run(
+                    [sys.executable, '-c', script, str(received_prompt), str(response)],
+                    input=kwargs['input'], text=kwargs['text'], encoding=kwargs['encoding'],
+                    capture_output=True, cwd=kwargs['cwd'], timeout=kwargs['timeout'], env=child_env,
+                )
+                self.assertEqual(child.returncode, 0, child.stderr)
+                return subprocess.CompletedProcess(cmd, 0, stdout='', stderr='')
+
+            with patch.dict(os.environ, {'PYTHONIOENCODING': 'cp1252', 'PYTHONUTF8': '0'}):
+                with patch('factory.subprocess.run', side_effect=codex_stub):
+                    result = factory._execute_agent('planner', 'plan', payload, config, root, out_dir)
+
+            prompt = (out_dir / 'prompt.txt').read_text(encoding='utf-8')
+            received = (out_dir / 'received-prompt.txt').read_text(encoding='utf-8')
+            self.assertTrue(received.startswith('ROLE: planner'))
+            self.assertIn('intent → acceptance contract', received)
+            self.assertIn('snow 雪 and café', received)
+            self.assertIn('intent → acceptance contract', prompt)
+            self.assertIn('snow 雪 and café', prompt)
+            self.assertEqual(result['summary'], 'UTF-8 prompt received')
+
     def test_install_merges_without_overwrite(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)

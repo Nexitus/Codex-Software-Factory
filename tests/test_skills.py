@@ -52,8 +52,9 @@ class SkillRegistryTests(unittest.TestCase):
             cat={'schema_version':1,'sources':{'demo':{'repo':'demo/demo','url':'https://github.com/demo/demo',
                   'branch':'main','commit':'0'*40,'license':'MIT'}},'entries':[entry]}
             reg=p/'registry.json'; reg.write_text(json.dumps(cat))
-            lock=p/'lock.json'; lock.write_text(json.dumps({'sources':cat['sources'],'skills':{'ponytail':{'source':'demo','git_blob':entry['git_blob'],'main_file':'SKILL.md','digest':skillctl.digest_tree(doc.parent)}}}))
-            with patch.object(skillctl,'CATALOG',reg),patch.object(skillctl,'LOCK',lock):
+            lock=p/'skills'/'lock.json'; lock.parent.mkdir(parents=True, exist_ok=True)
+            lock.write_text(json.dumps({'sources':cat['sources'],'skills':{'ponytail':{'source':'demo','git_blob':entry['git_blob'],'main_file':'SKILL.md','digest':skillctl.digest_tree(doc.parent)}}}))
+            with patch.object(skillctl,'CATALOG',reg):
                 s=skillctl.get_skill_context('planner','plan',{'request':'make app'},p,{'skills':{'enabled':True}},p/'out')
                 self.assertIn('approved content',s)
                 self.assertTrue((p/'out'/'skills.json').exists())
@@ -86,11 +87,16 @@ class SkillRegistryTests(unittest.TestCase):
             source={'repo':'test/local','url':str(upstream),'branch':'main','commit':sha,'license':'MIT'}
             cat={'schema_version':1,'sources':{'local':source},'entries':[entry]}
             catalog=base/'catalog.json'; catalog.write_text(json.dumps(cat))
-            lock=base/'lock.json'
-            with patch.object(skillctl,'CATALOG',catalog),patch.object(skillctl,'LOCK',lock):
+            package_lock=skillctl.HERE/'skills'/'lock.json'
+            package_lock_before=package_lock.read_bytes() if package_lock.exists() else None
+            with patch.object(skillctl,'CATALOG',catalog):
                 skillctl.install(project)
                 self.assertTrue((project/'.factory'/'skills'/'example'/'note.md').is_file())
                 self.assertTrue((project/'.factory'/'skills'/'example'/'UPSTREAM_LICENSE').is_file())
+                self.assertEqual(skillctl.lock_path(project), project/'skills'/'lock.json')
+                self.assertTrue((project/'skills'/'lock.json').is_file())
+                self.assertFalse((project/'.factory'/'skills'/'lock.json').exists())
+                self.assertEqual(package_lock.read_bytes() if package_lock.exists() else None, package_lock_before)
                 response=skillctl.get_skill_context('planner','plan',{'request':'test'},project,{'skills':{'enabled':True}},base/'out')
                 self.assertIn('Check acceptance criteria.',response)
                 with self.assertRaises(ValueError):
