@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import stat
 import subprocess
 import tempfile
+from pathlib import Path
 
 ALL_HARNESSES = ("codex", "claude", "opencode")
 _IGNORE_START = b"# >>> codex-software-factory managed >>>"
@@ -194,12 +194,12 @@ def initialize(project: Path, harnesses: list[str]) -> list[Path]:
             path, _, content = ignore_update
             staged[path] = _stage(path, content)
 
-        for destination in writes:
+        for destination, content in writes.items():
             try:
                 # shortcut: atomic no-overwrite promotion needs hard-link support on the target filesystem.
                 os.link(staged[destination], destination)
             except FileExistsError as error:
-                if not destination.is_file() or destination.read_bytes() != writes[destination]:
+                if not destination.is_file() or destination.read_bytes() != content:
                     raise ValueError(f"output changed during initialization: {destination.relative_to(root)}") from error
             else:
                 created.append((destination, _identity(destination)))
