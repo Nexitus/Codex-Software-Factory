@@ -431,6 +431,33 @@ class DashboardApiTests(unittest.TestCase):
 
                 asyncio.run(request_run())
 
+    def test_demo_runs_summary_preserves_synthetic_ready_report(self):
+        with tempfile.TemporaryDirectory() as temp:
+            app = server.create_app(db_path=Path(temp) / "demo.sqlite3", demo=True, demo_delay=0)
+
+            async def request_summary(app=app) -> None:
+                app.state.queue.start()
+                try:
+                    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1:8765") as client:
+                        token = (await client.get("/api/health")).json()["csrf_token"]
+                        headers = {"Origin": "http://127.0.0.1:8765", "X-CSRF-Token": token}
+                        created = await client.post("/api/runs", headers=headers,
+                                                    json={"requirement": "Synthetic summary", "project_id": "demo",
+                                                          "demo_outcome": "ready"})
+                        self.assertEqual(created.status_code, 202, created.text)
+                        detail = await self.wait_run(client, created.json()["run_id"], token)
+                        response = await client.get("/api/runs", headers={"X-CSRF-Token": token})
+                        self.assertEqual(response.status_code, 200, response.text)
+                        summary = next(run for run in response.json()["runs"] if run["id"] == detail["id"])
+                        self.assertEqual((summary["status"], summary["stage"], summary["delivery_status"]),
+                                         ("completed", "Ready", "verified_candidate"))
+                        self.assertEqual(summary["report"], detail["report"])
+                        self.assertEqual(summary["delivery"], detail["delivery"])
+                        self.assertTrue(summary["report"]["synthetic"])
+                finally:
+                    app.state.queue.stop()
+
+            asyncio.run(request_summary())
     def test_demo_http_flow_auth_replay_and_synthetic_detail_without_provider_processes(self):
         with tempfile.TemporaryDirectory() as temp:
             app = server.create_app(db_path=Path(temp) / "demo.sqlite3", demo=True, demo_delay=0)

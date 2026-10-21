@@ -449,6 +449,30 @@ def create_app(*, db_path: Path | None = None, projects_path: Path | None = None
     app = FastAPI(title="Software Factory Dashboard")
     app.state.db_path, app.state.projects, app.state.demo, app.state.csrf = database, projects, demo, csrf
     app.state.queue = queue
+    def _demo_delivery_report(run_events: list[dict[str, Any]], projected: dict[str, Any]) -> dict[str, Any] | None:
+        verified_event = next((event for event in reversed(run_events)
+                               if event["type"] == "delivery_verified" and
+                               event["data"].get("delivery_status") == "verified_candidate"), None)
+        if verified_event:
+            data = verified_event["data"]
+            return {
+                "status": "verified_candidate", "synthetic": True,
+                "summary": "Demo fixture only; no code generated",
+                "round": data.get("round"), "review_rounds": data.get("review_rounds"),
+                "gates": data.get("gates", []),
+            }
+        blocked_event = next((event for event in reversed(run_events)
+                              if event["type"] == "run_blocked" and
+                              projected.get("delivery_status") == "blocked"), None)
+        if blocked_event:
+            return {
+                "status": "blocked", "synthetic": True,
+                "summary": "Demo fixture only; no code generated",
+                "round": projected.get("round"), "blockers": blocked_event["data"].get("blockers", []),
+                "gates": projected.get("gates", []),
+            }
+        return None
+
 
     @app.on_event("startup")
     def _startup() -> None:
@@ -503,7 +527,12 @@ def create_app(*, db_path: Path | None = None, projects_path: Path | None = None
                 projected["created_at"], projected["updated_at"] = row["created_at"], row["updated_at"]
                 projected["queue_position"] = queue_positions.get(row["id"])
                 projected["report"] = json.loads(row["report_json"]) if row["report_json"] else None
-                if projected.get("delivery_status") == "verified_candidate":
+                if demo:
+                    report = _demo_delivery_report(events, projected)
+                    if report is not None:
+                        projected["report"] = report
+                        projected["delivery"] = report
+                elif projected.get("delivery_status") == "verified_candidate":
                     verified_event = any(
                         event["type"] == "delivery_verified"
                         and event["data"].get("delivery_status") == "verified_candidate"
@@ -550,27 +579,9 @@ def create_app(*, db_path: Path | None = None, projects_path: Path | None = None
         if demo:
             projected["plan"] = projected.get("demo_plan")
             projected["design"] = projected.get("demo_design", [])
-            verified_event = next((event for event in reversed(run_events)
-                                   if event["type"] == "delivery_verified" and
-                                   event["data"].get("delivery_status") == "verified_candidate"), None)
-            blocked_event = next((event for event in reversed(run_events)
-                                  if event["type"] == "run_blocked" and
-                                  projected.get("delivery_status") == "blocked"), None)
-            if verified_event:
-                data = verified_event["data"]
-                projected["report"] = {
-                    "status": "verified_candidate", "synthetic": True,
-                    "summary": "Demo fixture only; no code generated",
-                    "round": data.get("round"), "review_rounds": data.get("review_rounds"),
-                    "gates": data.get("gates", []),
-                }
-            elif blocked_event:
-                projected["report"] = {
-                    "status": "blocked", "synthetic": True,
-                    "summary": "Demo fixture only; no code generated",
-                    "round": projected.get("round"), "blockers": blocked_event["data"].get("blockers", []),
-                    "gates": projected.get("gates", []),
-                }
+            demo_report = _demo_delivery_report(run_events, projected)
+            if demo_report is not None:
+                projected["report"] = demo_report
         else:
             projected["plan"] = _artifact_json(project, row["supervisor_run_id"], "plan/parsed.json") if project and row["supervisor_run_id"] else None
             projected["design"] = _design_summaries(project, row["supervisor_run_id"]) if project and row["supervisor_run_id"] else []
