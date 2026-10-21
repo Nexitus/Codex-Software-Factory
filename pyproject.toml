@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-software-factory"
+version = "0.6.0"
+description = "A supervised software factory command-line tool."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+
+[project.scripts]
+software-factory = "codex_software_factory.cli:main"
+
+[tool.setuptools]
+packages = ["codex_software_factory", "codex_software_factory.app", "codex_software_factory.roles", "codex_software_factory.skills"]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+codex_software_factory = "."
+"codex_software_factory.app" = "app"
+
+[tool.setuptools.package-data]
+codex_software_factory = ["POLICY.md", "LICENSE", "roles/*.md", "skills/registry.json", "templates/*", "templates/**/*"]

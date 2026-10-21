@@ -1,0 +1,30 @@
+include LICENSE
+include README.md
+include CHANGELOG.md
+include POLICY.md
+include pyproject.toml
+include MANIFEST.in
+include factory.py
+include skillctl.py
+include dashboard.py
+include install.py
+include package.json
+include package-lock.json
+include requirements.txt
+include requirements-dev.txt
+recursive-include app *.py
+recursive-include roles *.md
+include skills/registry.json
+recursive-include templates *
+recursive-include dashboard *.ts *.tsx *.html *.css *.svg *.json *.cjs
+recursive-include docs *.md
+recursive-include examples *.json
+prune .factory
+prune .venv
+prune node_modules
+prune dashboard/node_modules
+prune dashboard/dist
+prune dist
+exclude factory.config.json
+global-exclude *.py[cod]
+global-exclude .env .env.*

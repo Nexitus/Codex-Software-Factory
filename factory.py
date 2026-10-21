@@ -23,16 +23,28 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.checkout_lock import (
-    CheckoutBusy,
-    CheckoutQuarantined,
-    checkout_lock,
-    claim_checkout,
-)
-from app.events import assert_no_orphaned_run, event_context, redact, register_cli_run
-from app.events import emit as emit_event
-from app.process_guard import process_birth
-from skillctl import get_skill_context
+if __package__:
+    from .app.checkout_lock import (
+        CheckoutBusy,
+        CheckoutQuarantined,
+        checkout_lock,
+        claim_checkout,
+    )
+    from .app.events import assert_no_orphaned_run, event_context, redact, register_cli_run
+    from .app.events import emit as emit_event
+    from .app.process_guard import process_birth
+    from .skillctl import get_skill_context
+else:
+    from app.checkout_lock import (
+        CheckoutBusy,
+        CheckoutQuarantined,
+        checkout_lock,
+        claim_checkout,
+    )
+    from app.events import assert_no_orphaned_run, event_context, redact, register_cli_run
+    from app.events import emit as emit_event
+    from app.process_guard import process_birth
+    from skillctl import get_skill_context
 
 ROOT = Path(__file__).resolve().parent
 
