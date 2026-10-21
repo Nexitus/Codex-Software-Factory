@@ -223,6 +223,8 @@ class RunQueue:
             if not path.resolve(strict=True).is_relative_to(run_dir):
                 return None
             report = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(report, dict):
+                return None
             # Report-only recovery may restore a blocked state. Ready requires the
             # persisted supervisor delivery_verified event, never a report claim alone.
             return report if report.get("status") == "blocked" else None
@@ -266,7 +268,7 @@ class RunQueue:
                         continue
                     try:
                         report = json.loads(report_path.read_text(encoding="utf-8"))
-                        if report.get("status") not in ("verified_candidate", "blocked"):
+                        if not isinstance(report, dict) or report.get("status") not in ("verified_candidate", "blocked"):
                             continue
                     except (OSError, ValueError):
                         continue
@@ -501,6 +503,21 @@ def create_app(*, db_path: Path | None = None, projects_path: Path | None = None
                 projected["created_at"], projected["updated_at"] = row["created_at"], row["updated_at"]
                 projected["queue_position"] = queue_positions.get(row["id"])
                 projected["report"] = json.loads(row["report_json"]) if row["report_json"] else None
+                if projected.get("delivery_status") == "verified_candidate":
+                    verified_event = any(
+                        event["type"] == "delivery_verified"
+                        and event["data"].get("delivery_status") == "verified_candidate"
+                        for event in events
+                    )
+                    report = (_artifact_json(configured, row["supervisor_run_id"], "DELIVERY.json")
+                              if row["supervisor_run_id"] else None)
+                    if verified_event and isinstance(report, dict) and report.get("status") == "verified_candidate":
+                        projected["report"] = report
+                        projected["delivery"] = report
+                    else:
+                        projected["delivery_status"] = "pending"
+                        projected["report"] = report
+                        projected["delivery"] = report
                 result.append(_public_run(projected, include_history=False))
         finally:
             db.rollback()
@@ -715,6 +732,8 @@ def _artifact_json(project: dict[str, str], supervisor_id: str, relative: str) -
         if not resolved.is_relative_to(run_dir) or not resolved.is_file() or resolved.stat().st_size > 10_000_000:
             return None
         value = json.loads(resolved.read_text(encoding="utf-8"))
+        if relative == "DELIVERY.json" and not isinstance(value, dict):
+            return None
         return redact(value)
     except (OSError, ValueError, json.JSONDecodeError):
         return None

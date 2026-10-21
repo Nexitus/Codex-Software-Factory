@@ -80,6 +80,18 @@ class RedactionTests(unittest.TestCase):
             for secret in secrets:
                 self.assertNotIn(secret, serialized)
 
+    def test_delivery_artifacts_reject_non_object_json(self):
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp)
+            run_dir = project / ".factory" / "runs" / "bad-report"
+            run_dir.mkdir(parents=True)
+            path = run_dir / "DELIVERY.json"
+            for value in ([], None, "text", 42, False):
+                with self.subTest(value=value):
+                    path.write_text(json.dumps(value), encoding="utf-8")
+                    self.assertIsNone(server._artifact_json(
+                        {"id": "p", "name": "P", "path": str(project)}, "bad-report", "DELIVERY.json"))
+
 
 class EventStoreTests(unittest.TestCase):
     def test_concurrent_event_writers_get_unique_persisted_global_sequences(self):
@@ -271,6 +283,48 @@ class ProcessAndRecoveryTests(unittest.TestCase):
             self.assertEqual(run["status"], "running")
             self.assertFalse((project / ".factory" / "active-run.json").exists())
 
+
+    def test_non_object_reports_do_not_crash_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            project = make_project(root / "project")
+            db_path = root / "events.sqlite3"
+            initialize(db_path, mode="live")
+            for index, value in enumerate(([], None, "text", 42, False)):
+                supervisor_id = f"bad-{index}"
+                run_dir = project / ".factory" / "runs" / supervisor_id
+                run_dir.mkdir(parents=True)
+                (run_dir / "DELIVERY.json").write_text(json.dumps(value), encoding="utf-8")
+                insert_run(db_path, project, run_id=f"run-{index}", supervisor_run_id=supervisor_id)
+            queue = server.RunQueue(db_path, [{"id": "test", "name": "Test", "path": str(project)}], demo=False)
+            queue._recover()
+            self.assertEqual([server._run_row(db_path, f"run-{index}")["status"] for index in range(5)],
+                             ["orphaned"] * 5)
+
+    def test_reconciliation_skips_non_object_reports_and_continues(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            project = make_project(root / "project")
+            runs_dir = project / ".factory" / "runs"
+            for index, value in enumerate(([], None, "text", 42, False)):
+                run_dir = runs_dir / f"bad-{index}"
+                run_dir.mkdir(parents=True)
+                (run_dir / "DELIVERY.json").write_text(json.dumps(value), encoding="utf-8")
+            good_dir = runs_dir / "good"
+            good_dir.mkdir(parents=True)
+            (good_dir / "DELIVERY.json").write_text(
+                json.dumps({"status": "verified_candidate", "request": "Valid legacy report"}), encoding="utf-8")
+            db_path = root / "events.sqlite3"
+            queue = server.RunQueue(db_path, [{"id": "test", "name": "Test", "path": str(project)}], demo=False)
+            queue.start()
+            queue.stop()
+            db = connect(db_path)
+            try:
+                rows = db.execute("SELECT supervisor_run_id,status FROM runs ORDER BY supervisor_run_id").fetchall()
+            finally:
+                db.close()
+            self.assertEqual([(row["supervisor_run_id"], row["status"]) for row in rows], [("good", "orphaned")])
+
     def test_report_only_verified_candidate_recovers_as_orphaned_not_ready(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -318,6 +372,64 @@ class DashboardApiTests(unittest.TestCase):
                 return result
             await asyncio.sleep(0.01)
         self.fail("demo run did not reach a terminal status")
+
+
+    def test_live_ready_requires_persisted_event_and_matching_delivery_report(self):
+        cases = (
+            ("missing", None, True, False),
+            ("mismatched", {"status": "blocked", "summary": "disk"}, True, False),
+            ("report_only", {"status": "verified_candidate", "summary": "disk"}, False, False),
+            ("verified", {"status": "verified_candidate", "summary": "disk"}, True, True),
+        )
+        for name, report, has_verified_event, ready in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                project = make_project(root / "project")
+                supervisor_id = "candidate"
+                if report is not None:
+                    run_dir = project / ".factory" / "runs" / supervisor_id
+                    run_dir.mkdir(parents=True)
+                    (run_dir / "DELIVERY.json").write_text(json.dumps(report), encoding="utf-8")
+                db_path = root / "events.sqlite3"
+                initialize(db_path, mode="live")
+                insert_run(db_path, project, supervisor_run_id=supervisor_id)
+                with event_context(db_path, "run-1", "run-1"):
+                    emit("run_started", {"supervisor_run_id": supervisor_id})
+                    if has_verified_event:
+                        emit("delivery_verified", {
+                            "supervisor_run_id": supervisor_id,
+                            "delivery_status": "verified_candidate",
+                            "summary": "persisted event",
+                        })
+                projects_path = root / "projects.json"
+                projects_path.write_text(json.dumps({"projects": [{
+                    "id": "test", "name": "Test project", "path": str(project),
+                }]}), encoding="utf-8")
+                app = server.create_app(db_path=db_path, projects_path=projects_path)
+
+                async def request_run(app=app, report=report, ready=ready):
+                    async with AsyncClient(
+                        transport=ASGITransport(app=app), base_url="http://127.0.0.1:8765"
+                    ) as client:
+                        token = (await client.get("/api/health")).json()["csrf_token"]
+                        headers = {"X-CSRF-Token": token}
+                        summary = (await client.get("/api/runs", headers=headers)).json()["runs"][0]
+                        detail = (await client.get("/api/runs/run-1", headers=headers)).json()
+                        if ready:
+                            self.assertEqual(
+                                (summary["status"], summary["stage"], summary["delivery_status"]),
+                                ("completed", "Ready", "verified_candidate"),
+                            )
+                            self.assertEqual(summary["report"], report)
+                        else:
+                            self.assertFalse(
+                                summary["status"] == "completed"
+                                and summary["stage"] == "Ready"
+                                and summary["delivery_status"] == "verified_candidate"
+                            )
+                        self.assertEqual(detail["report"], report)
+
+                asyncio.run(request_run())
 
     def test_demo_http_flow_auth_replay_and_synthetic_detail_without_provider_processes(self):
         with tempfile.TemporaryDirectory() as temp:
