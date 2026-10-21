@@ -1,0 +1,61 @@
+{
+  "providers": {
+    "planner": "codex",
+    "build_orchestrator": "claude",
+    "builder": "claude",
+    "testing": "codex",
+    "architecture": "claude",
+    "ui": "codex",
+    "ux": "claude",
+    "security": "codex"
+  },
+  "models": {
+    "planner": "gpt-6-sol",
+    "build_orchestrator": "claude-opus-5-5",
+    "builder": "claude-haiku-5-5",
+    "testing": "gpt-6-luna",
+    "architecture": "claude-haiku-5-5",
+    "ui": "gpt-6-luna",
+    "ux": "claude-haiku-5-5",
+    "security": "gpt-6-luna"
+  },
+  "max_review_rounds": 3,
+  "max_agent_seconds": 1200,
+  "max_gate_seconds": 600,
+  "claude_max_turns": 60,
+  "claude_budget_usd_per_call": 10.0,
+  "required_gates": [
+    "tests",
+    "lint",
+    "security",
+    "build"
+  ],
+  "ui_required_gate": "ui_e2e",
+  "commands": {
+    "tests": [
+      ["python", "-m", "pytest", "-q", "tests"],
+      ["npm", "test", "--", "--run"]
+    ],
+    "lint": [
+      ["ruff", "check", "app"],
+      ["npm", "run", "lint"]
+    ],
+    "security": [
+      ["pip-audit", "-r", "requirements.txt", "-r", "requirements-dev.txt"],
+      ["npm", "audit", "--audit-level=high"]
+    ],
+    "build": [
+      ["python", "-m", "compileall", "-q", "app"],
+      ["npm", "run", "build"]
+    ],
+    "ui_e2e": [
+      ["npx", "playwright", "test"]
+    ]
+  },
+  "skills": {
+    "enabled": false,
+    "max_per_invocation": 4,
+    "max_chars_per_skill": 12000,
+    "note": "Opt-in only. Run python skillctl.py install, commit skills/lock.json, set enabled=true and commit."
+  }
+}

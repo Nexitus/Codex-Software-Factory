@@ -1,0 +1,299 @@
+{
+  "schema_version": 1,
+  "description": "Pinned role-aware source catalog. Prompt skills require installation; external apps and governance references are not executable agent skills.",
+  "sources": {
+    "pro-max": {
+      "repo": "nextlevelbuilder/ui-ux-pro-max-skill",
+      "url": "https://github.com/nextlevelbuilder/ui-ux-pro-max-skill",
+      "branch": "main",
+      "commit": "56ea9cf174ed86786187daa9de0e6247cb0747e4",
+      "license": "MIT"
+    },
+    "emil": {
+      "repo": "emilkowalski/skills",
+      "url": "https://github.com/emilkowalski/skills",
+      "branch": "main",
+      "commit": "2d228630ba1446365f614a108cb8252f1feda202",
+      "license": "MIT"
+    },
+    "screenshot": {
+      "repo": "abi/screenshot-to-code",
+      "url": "https://github.com/abi/screenshot-to-code",
+      "branch": "main",
+      "commit": "a8139779f7c5ae231b7f2a86fa7f83ddc5f7badc",
+      "license": "MIT"
+    },
+    "graphify": {
+      "repo": "Graphify-Labs/graphify",
+      "url": "https://github.com/Graphify-Labs/graphify",
+      "branch": "v8",
+      "commit": "b90b9df7949bd04a15b40a1624af85d0a9cfdf04",
+      "license": "Apache-2.0"
+    },
+    "ponytail": {
+      "repo": "dietrichgebert/ponytail",
+      "url": "https://github.com/dietrichgebert/ponytail",
+      "branch": "main",
+      "commit": "09c434ab73ca43761c5d8b0c5d341926c2fba710",
+      "license": "MIT"
+    },
+    "claude-skills": {
+      "repo": "alirezarezvani/claude-skills",
+      "url": "https://github.com/alirezarezvani/claude-skills",
+      "branch": "main",
+      "commit": "19392f7a08264ed00486a251f5b2098321771f94",
+      "license": "MIT"
+    }
+  },
+  "entries": [
+    {
+      "id": "ui-ux-pro-max",
+      "source": "pro-max",
+      "path": ".claude/skills/ui-ux-pro-max/SKILL.md",
+      "git_blob": "41f8e2fd7f8c568228d0b55186ebe3f7b4007377",
+      "roles": [
+        "ui",
+        "ux"
+      ],
+      "phases": [
+        "design",
+        "review"
+      ],
+      "activation": "always",
+      "mode": "prompt",
+      "description": "Shared design system, visual and UX reference; separate role-specific instructions."
+    },
+    {
+      "id": "emil-design-eng",
+      "source": "emil",
+      "path": "skills/emil-design-eng/SKILL.md",
+      "git_blob": "62ce902af8dd32c590ea7203e9ab2edb1d6ef81a",
+      "roles": [
+        "ui"
+      ],
+      "phases": [
+        "design",
+        "review"
+      ],
+      "activation": "always",
+      "mode": "prompt",
+      "description": "Polish, component craft, motion decisions; JSON schema overrules upstream output format."
+    },
+    {
+      "id": "emil-animate",
+      "source": "emil",
+      "path": "skills/animate/SKILL.md",
+      "git_blob": "7c3b20c6ed681b2d47c9ca9e3ee0e659ed47d032",
+      "roles": [
+        "ui"
+      ],
+      "phases": [
+        "design"
+      ],
+      "activation": "motion",
+      "mode": "prompt",
+      "description": "Only when scope has animation or transitions."
+    },
+    {
+      "id": "emil-review-animations",
+      "source": "emil",
+      "path": "skills/review-animations/SKILL.md",
+      "git_blob": "577a64397267ce20960de2202950594d5bd6f9b6",
+      "roles": [
+        "ui"
+      ],
+      "phases": [
+        "review"
+      ],
+      "activation": "motion",
+      "mode": "prompt",
+      "description": "Checks animation/motion when such code was modified."
+    },
+    {
+      "id": "emil-break-ui",
+      "source": "emil",
+      "path": "skills/break-ui/SKILL.md",
+      "git_blob": "091a28d488662d2451131f1aaa60a6dcd2391932",
+      "roles": [
+        "testing",
+        "ux"
+      ],
+      "phases": [
+        "design",
+        "review"
+      ],
+      "activation": "ui",
+      "mode": "prompt",
+      "description": "Worst-realistic-data UX tests, converted to read-only findings/test requests."
+    },
+    {
+      "id": "screenshot-to-code",
+      "source": "screenshot",
+      "path": null,
+      "git_blob": null,
+      "roles": [
+        "ui",
+        "testing"
+      ],
+      "phases": [
+        "design",
+        "review"
+      ],
+      "activation": "reference_images",
+      "mode": "external",
+      "description": "Standalone React/FastAPI app; integration not installed as a skill. Optional supervised screenshot reconstruction, NOT an independent visual oracle."
+    },
+    {
+      "id": "graphify",
+      "source": "graphify",
+      "path": "graphify/skill.md",
+      "git_blob": "d09ad219b2c1f78f356a07dfbfcc24a57fe53c5b",
+      "roles": [
+        "planner"
+      ],
+      "phases": [
+        "plan"
+      ],
+      "activation": "existing_codebase",
+      "mode": "prompt",
+      "description": "Read graphify methodology; actual AST graph generation requires separately provisioned, sandboxed graphifyy tooling."
+    },
+    {
+      "id": "ponytail",
+      "source": "ponytail",
+      "path": "skills/ponytail/SKILL.md",
+      "git_blob": "d64edd32265ba21cbf5270158f04e97d96925f27",
+      "roles": [
+        "planner"
+      ],
+      "phases": [
+        "plan"
+      ],
+      "activation": "always",
+      "mode": "prompt",
+      "description": "Minimal full solution with test/security/accessibility intact. Bounded by acceptance criteria."
+    },
+    {
+      "id": "loop-library",
+      "source": "claude-skills",
+      "path": "loop-library/SKILL.md",
+      "git_blob": "2783d4ad623e77a3e6c0c7d935aa79ea6399997b",
+      "roles": [
+        "supervisor"
+      ],
+      "phases": [
+        "governance"
+      ],
+      "activation": "always",
+      "mode": "reference",
+      "description": "Loop audit pattern: triggers, verify, retry caps, stop/escalate. Design guidance only; Python supervisor remains authoritative."
+    },
+    {
+      "id": "agent-harness",
+      "source": "claude-skills",
+      "path": "engineering/agent-harness/skills/agent-harness/SKILL.md",
+      "git_blob": "b877324047137a8344f5b364af8fdcec67561945",
+      "roles": [
+        "supervisor"
+      ],
+      "phases": [
+        "governance"
+      ],
+      "activation": "always",
+      "mode": "reference",
+      "description": "Goal compiler, machine-run verification and capped loop patterns; no nested controller."
+    },
+    {
+      "id": "agent-workflow-designer",
+      "source": "claude-skills",
+      "path": "engineering/skills/agent-workflow-designer/SKILL.md",
+      "git_blob": "d278bc77cf01649b17121f17068c79007526eecc",
+      "roles": [
+        "planner"
+      ],
+      "phases": [
+        "plan"
+      ],
+      "activation": "factory_workflow",
+      "mode": "prompt",
+      "description": "Only when the feature is an agentic workflow; not default for all product requirements."
+    },
+    {
+      "id": "focused-fix",
+      "source": "claude-skills",
+      "path": "engineering/skills/focused-fix/SKILL.md",
+      "git_blob": "b936b5abab7cdad43c2e1d558c71e6d013f7d0a8",
+      "roles": [
+        "builder"
+      ],
+      "phases": [
+        "repair"
+      ],
+      "activation": "multi_file_failure",
+      "mode": "prompt",
+      "description": "Scope/trace/diagnose wide regressions before repair."
+    },
+    {
+      "id": "pr-review-expert",
+      "source": "claude-skills",
+      "path": "engineering/skills/pr-review-expert/SKILL.md",
+      "git_blob": "91f2de0e5000488a9a32f54ac32c308ebfa8dd33",
+      "roles": [
+        "architecture",
+        "testing"
+      ],
+      "phases": [
+        "review"
+      ],
+      "activation": "large_diff",
+      "mode": "prompt",
+      "description": "Blast radius, changed callers, breaking contracts, test deltas; review only."
+    },
+    {
+      "id": "ship-gate",
+      "source": "claude-skills",
+      "path": "engineering/skills/ship-gate/SKILL.md",
+      "git_blob": "5243045b972c592d11b6677ccd55d3119b020d47",
+      "roles": [
+        "security"
+      ],
+      "phases": [
+        "review"
+      ],
+      "activation": "pre_release",
+      "mode": "prompt",
+      "description": "Supplemental pre-release checklist, not a substitute for executable gates."
+    },
+    {
+      "id": "skill-security-auditor",
+      "source": "claude-skills",
+      "path": "engineering/skills/skill-security-auditor/SKILL.md",
+      "git_blob": "d7c72d9e8df7f7dc0a251cad50342341e777cdb5",
+      "roles": [
+        "supervisor"
+      ],
+      "phases": [
+        "acquisition"
+      ],
+      "activation": "always",
+      "mode": "reference",
+      "description": "Audit guidance for adopting third-party skills; execute audit outside model runtime."
+    },
+    {
+      "id": "adversarial-reviewer",
+      "source": "claude-skills",
+      "path": "engineering-team/skills/adversarial-reviewer/SKILL.md",
+      "git_blob": "d0d6e65e993f70e91d5e83822c47e0b75b1a6a33",
+      "roles": [
+        "architecture",
+        "security"
+      ],
+      "phases": [
+        "review"
+      ],
+      "activation": "optional_adversarial",
+      "mode": "prompt",
+      "description": "OPT-IN only: original mandates invented findings; adapter must permit zero findings with evidence."
+    }
+  ]
+}
