@@ -25,6 +25,7 @@ from typing import Any
 
 if __package__:
     from .app.checkout_lock import (
+        canonical_checkout,
         CheckoutBusy,
         CheckoutQuarantined,
         checkout_lock,
@@ -36,6 +37,7 @@ if __package__:
     from .skillctl import get_skill_context
 else:
     from app.checkout_lock import (
+        canonical_checkout,
         CheckoutBusy,
         CheckoutQuarantined,
         checkout_lock,
@@ -677,7 +679,6 @@ def main() -> int:
         parser.error("--dry-run and --publish-pr cannot be combined")
     project = args.project.resolve()
     try:
-        from app.checkout_lock import canonical_checkout
         project = canonical_checkout(project)
     except ValueError as exc:
         print(f"BLOCKED: {exc}", file=sys.stderr)

@@ -94,6 +94,21 @@ class DistributionTests(unittest.TestCase):
         result = run([str(script), "--help"], cwd=outside)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_packaged_supervisor_main_uses_namespaced_checkout_import(self) -> None:
+        python, _ = self.install(self.wheel, "supervisor-venv")
+        project = self.temp_path / "not-a-git-project"
+        project.mkdir()
+        outside = self.temp_path / "supervisor-foreign-directory"
+        outside.mkdir()
+        code = (
+            "import sys; from codex_software_factory.factory import main; "
+            "sys.argv = ['software-factory', '--idea', 'smoke', '--project', sys.argv[1]]; "
+            "raise SystemExit(main())"
+        )
+        result = run([str(python), "-c", code, str(project)], cwd=outside)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("BLOCKED: Project must be a Git checkout", result.stderr)
+
     def test_install_has_no_generic_top_level_modules(self) -> None:
         with zipfile.ZipFile(self.wheel) as archive:
             names = set(archive.namelist())
