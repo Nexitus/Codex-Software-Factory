@@ -1,23 +1,23 @@
 {
   "providers": {
-    "planner": "codex",
+    "planner": "claude",
     "build_orchestrator": "claude",
     "builder": "claude",
-    "testing": "codex",
+    "testing": "claude",
     "architecture": "claude",
-    "ui": "codex",
+    "ui": "claude",
     "ux": "claude",
-    "security": "codex"
+    "security": "claude"
   },
   "models": {
-    "planner": "gpt-6-sol",
+    "planner": "claude-opus-5-5",
     "build_orchestrator": "claude-opus-5-5",
     "builder": "claude-haiku-5-5",
-    "testing": "gpt-6-luna",
+    "testing": "claude-haiku-5-5",
     "architecture": "claude-haiku-5-5",
-    "ui": "gpt-6-luna",
+    "ui": "claude-haiku-5-5",
     "ux": "claude-haiku-5-5",
-    "security": "gpt-6-luna"
+    "security": "claude-haiku-5-5"
   },
   "max_review_rounds": 3,
   "max_agent_seconds": 1200,
