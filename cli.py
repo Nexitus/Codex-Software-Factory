@@ -10,10 +10,7 @@ import sys
 try:
     _VERSION = version("codex-software-factory")
 except PackageNotFoundError:
-    if __package__:
-        from . import __version__ as _VERSION
-    else:
-        _VERSION = "0.6.0"
+    _VERSION = "0.6.0"
 
 if __package__:
     from .project_setup import ALL_HARNESSES, initialize
