@@ -1,7 +1,7 @@
 # Consumable factory CLI and harness integration
 
 Date: 2026-10-21
-Status: Approved by the user in chat on 2026-10-21. Implementation plan awaits review.
+Status: Approved by the user in chat on 2026-10-21. Implementation plan and separate maintenance execution approved; subagent gpt-6-luna xhigh build in progress.
 UI change: false. Existing dashboard behavior remains in regression scope.
 
 ## Objective
@@ -86,7 +86,7 @@ Reuse Python's `argparse`, `pathlib`, existing error handling, and explicit argv
 | CLI-06 | Installed runtime resolves all prompts, policies, schemas, and skills; no state is written into the installed distribution. | Integration run with read-only installation resources and target-local artifacts/event DB. |
 | CLI-07 | Wrapper preserves supervisor arguments, exit codes, model tiers, gates, locks, and quarantine behavior. | Focused forwarding tests plus existing supervisor/backend regression suite. |
 | CLI-08 | Status is evidence-based for no runs, preflight, running, interrupted, blocked, valid delivery, and malformed/missing reports. | Fixture-driven status tests. |
-| CLI-09 | Claude Code, OpenCode, Codex Desktop, and Codex CLI discover their integration and invoke the installed command. | Actual per-surface invocation transcripts, installed versions, selected project, exit/status, and evidence paths. Mock tests alone do not satisfy this item. |
+| CLI-09 | Codex Desktop and Codex CLI discover their integration and invoke the installed command. Claude Code/OpenCode adapters are included but explicitly unverified for this release. | Actual Codex per-surface invocation transcripts, installed versions, selected project, exit/status, and evidence paths. Static/template tests cover the deferred adapters; no Claude/OpenCode authentication or live provider call is required. |
 | CLI-10 | At least one installed-package factory run completes planning, design, build, gates, independent review, and delivery using default Codex routing. | `DELIVERY.json` with `verified_candidate`, matching source revision, green gates and required reviews, and no unresolved blocking findings. |
 | CLI-11 | Existing factory/dashboard behavior remains functional. | Python tests, frontend tests, typecheck/build, applicable security checks, and dashboard browser regression evidence. |
 | CLI-12 | Windows and Linux package/setup contracts pass. | Platform-specific test/install logs; clearly identify which platforms received live-provider/harness checks. |
@@ -114,3 +114,7 @@ No additional product decision blocks the written spec. Execution conditions sti
 - OpenCode skills and compatibility paths: https://opencode.ai/docs/skills/
 
 These sources were inspected during initial design. Verify the installed harness behavior during implementation; documentation is not execution evidence.
+
+## User scope amendment, 2026-10-21
+
+The user confirmed Claude Code is unavailable and requested only Codex for now. Live harness qualification and release readiness therefore require Codex Desktop and Codex CLI only. Keep the already implemented Claude Code/OpenCode adapter files as explicitly unverified integrations, without further authentication or live model requests. Their external HTTP403/503 readiness failures do not block this Codex-only release. All other checks and source-publication conditions remain in force.

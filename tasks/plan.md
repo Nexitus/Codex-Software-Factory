@@ -129,13 +129,13 @@ Order: Task 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8. Tasks are sequential be
 
 **Acceptance:** CLI-01 through CLI-08 documented, CLI-12 automated. A local Windows run does not count as Linux evidence.
 
-## Task 7: Qualify the complete build and four harness surfaces
+## Task 7: Qualify the complete build and Codex surfaces
 
 **Files:** Evidence under ignored `.factory/maintenance/`; summarize in `docs/consumable-factory-cli-verification.md`. Repair code only through the low-tier Builder, followed by fresh independent review.
 
 - [ ] Run `python -m pytest -q tests`, `npm test -- --run`, `npm run lint`, `npm run build`, `ruff check app`, `pip-audit -r requirements.txt -r requirements-dev.txt`, and `npm audit --audit-level=high` in the reviewed baseline environment. Add new Python files to lint/security scope where applicable; never reduce existing checks.
 - [ ] Run `npx playwright test` with the existing browser evidence setup; inspect actual dashboard rendering and console/network failures. Use browser-testing-with-devtools for requested rendered inspection. Record any unavailable browser/platform capability as a release blocker.
-- [ ] On each of Claude Code, OpenCode, Codex Desktop, and Codex CLI, verify skill discovery, then invoke installed doctor and a real supervisor dry-run in a dedicated fixture checkout. Capture host version, command/action, target path, output, exit/status, and evidence. Do not pass sandbox/permission bypass flags or confuse a transcript from one surface with another.
+- [ ] On Codex Desktop and Codex CLI, verify skill discovery, then invoke installed doctor and a real supervisor dry-run in a dedicated fixture checkout. Capture host version, command/action, target path, output, exit/status, and evidence. Do not pass sandbox/permission bypass flags or confuse a transcript from one surface with another.
 - [ ] Run one small, committed fixture application through the installed command with all stages, real default Codex workers, genuine configured gates, and independent review. Require its `DELIVERY.json` to say `verified_candidate` and inspect the matching gate/review evidence. This verifies the packaged product; it does not certify the factory maintenance diff.
 - [ ] Obtain independent read-only architecture/testing/security review of the complete maintenance diff, using Luna specialists, plus UI/UX review of any pre-existing dashboard changes being published. Resolve all blocking findings through Builder repairs. Re-run affected checks after each repair; bind final evidence to the exact source revision/diff.
 - [ ] Fill the CLI-01 through CLI-13 matrix with actual artifact paths, commands, exit codes, platforms, and limitations. No unresolved required check is compatible with publication readiness.
@@ -161,3 +161,7 @@ Rollback only task-owned local changes or select the preceding installed version
 Self-review coverage: CLI-01/02 → Task 2; CLI-03/04 → Task 3; CLI-05/06/07 → Task 4; CLI-05/08 → Task 5; CLI-12 → Task 6; CLI-09/10/11/13 → Task 7; CLI-14 → Task 8. Review-focus cases are assigned to named tests above.
 
 **Decision needed before code:** approve this plan and the Task 1 maintenance execution exception. Recommended execution is one scoped low-tier Builder with sequential tasks and independent read-only review, coordinated here. Native implementation by the coordinating model is not permitted by the approved role policy. No application-run safeguards are disabled.
+
+Execution approval recorded 2026-10-21: user approved this plan, the separate maintenance workflow, and GPT-6 Luna xhigh subagent implementation. The decision described above is resolved. Task completion evidence lives in tasks/todo.md and the ignored per-plan ledger.
+
+Scope amendment 2026-10-21: user requested only Codex live qualification. Task7 and CLI-09 require Desktop/CLI Codex evidence; Claude/OpenCode adapters remain included but explicitly unverified, with no further authentication or provider calls. Their recorded external failures do not block publication. This user direction supersedes earlier all-four-host live wording.
