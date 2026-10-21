@@ -1,5 +1,15 @@
 # Architecture and operator contract
 
+## Consumable CLI and consumer ownership
+
+The distribution exposes `software-factory`. `--help` and `--version` work without a project checkout or optional dashboard dependencies. `init` initializes an existing Git checkout with project configuration and selected host instructions; it does not copy factory code, dashboard files, or gate commands into a consumer project. The legacy `python install.py <repo>` scaffold remains available and is not automatically migrated.
+
+`software-factory run` forwards its argument vector to the same deterministic supervisor used by `python factory.py`. Installed policy, role prompts, schemas, and templates are read-only package resources. Project config and default run/event state belong beneath the selected consumer checkout; user-relative spec/config/event paths remain relative to the caller's working directory. A dry run writes local run/event evidence but does not invoke a provider or project gate.
+
+The intended operator sequence is initialize, configure real project gates, commit the configuration and initial project files, check readiness, run, and inspect status. The CLI implements `doctor` for local readiness and `status` for saved run evidence. Windows wheel and sdist-derived-wheel lifecycle tests cover both commands; broader state fixtures and native-host qualification remain pending in the [CLI verification matrix](consumable-factory-cli-verification.md).
+
+Codex is the only provider qualification target for the first release. Codex Desktop and Codex CLI use the Codex skill adapter; Claude Code and OpenCode templates remain explicitly unverified. The package does not install or authenticate any host/provider CLI. A harness invocation is not a substitute for supervisor gate and review evidence.
+
 ## States
 
 `request → premium plan → low-cost specialist design → premium build dispatch → low-cost build worker → {gates + low-cost reviews → premium triage → low-cost repair}* → verified_candidate | blocked`
@@ -25,16 +35,9 @@ A hostile repository can contain dangerous install scripts, tests, readmes and e
 
 The supervisor uses a clean working-tree prerequisite, SHA-256 snapshots of protected files, checks Git HEAD after agent stages, structured contracts, and subprocess timeouts. These are **integrity tripwires**, not a hard security boundary. There is no OS isolation in this version.
 
-## Future roadmap
+## Tiered routing for the first release
 
-- v0.2: Docker/VM executor and worktree-per-feature; immutable verification image; policy as code.
-- v0.3: durable SQLite run state, resume/retry, aggregated token/cost reporting, parallel independent worktrees, notifications.
-- v0.4: staging environment, browser screenshot comparisons, a11y audit, security scans/attestation; PR CI coordination.
-- v1.0: optional policy-gated release promotion and rollback, with mandatory human approvals for production or destructive operations.
-
-## Tiered routing (v0.4)
-
-Planner and Build Orchestrator have read-only access on explicit GPT Sol / Claude Opus. All task-specific roles, including the implementation worker, have explicit GPT Luna / Claude Haiku. No default models, silent escalation or implicit downgrades are permitted. CLI model availability is account-dependent and a provider failure blocks the run.
+The first release config is Codex-only: planner and build_orchestrator use GPT Sol; Builder and every specialist use GPT Luna. No default models or silent tier changes are permitted. Provider availability is account-dependent and an invocation failure blocks the run. Claude Code and OpenCode adapters are retained but unverified.
 
 ## Verification content isolation
 
@@ -46,7 +49,7 @@ The dashboard is a loopback-only FastAPI application started by `dashboard.py`. 
 
 `factory.py` remains the only authority for planning, role/model routing, design, build, repair rounds, deterministic gates, reviews, report generation, and final delivery status. It emits lifecycle, stage, agent, gate, finding, repair, round, delivery, and completion events from the existing supervisor flow. The dashboard starts the existing CLI using a fixed argument vector and a validated project ID; it does not create a second implementation path or accept user-supplied shell commands. The protected support modules are `app/events.py`, `app/projector.py`, `app/checkout_lock.py`, and `app/process_guard.py`.
 
-`app/projector.py` deterministically projects stored events into the eight board stages: Queue, Planning, Design, Build, Review, Repair, Ready, and Blocked. `Ready` requires a persisted supervisor `delivery_verified` event whose `delivery_status` is exactly `verified_candidate`; a process exit, `run_completed`, or a report file alone cannot promote a run. A failed review verdict remains a failed stoplight even if its CLI process returned successfully. Restart recovery reattaches only to a matching live supervisor process identity. A report-only success claim is never synthesized into verification evidence.
+`app/projector.py` deterministically projects stored events into the eight board stages: Queue, Planning, Design, Build, Review, Repair, Ready, and Blocked. `Ready` requires a persisted supervisor `delivery_verified` event with `delivery_status` exactly `verified_candidate` and a matching bounded `DELIVERY.json` report for the same run. Conflicting or incomplete evidence cannot promote a run; a process exit, `run_completed`, event alone, or report alone is insufficient. A failed review verdict remains a failed stoplight even if its CLI process returned successfully. Restart recovery reattaches only to a matching live supervisor process identity. A report-only success claim is never synthesized into verification evidence.
 
 The dashboard endpoints are `GET /api/health`, `/api/projects`, `/api/runs`, `/api/runs/{id}`, `/api/runs/{id}/events`, `/api/runs/{id}/artifacts`, and `GET /api/events` for global Server-Sent Events replay; `POST /api/runs` queues work. The run-list response includes a snapshot `last_event_id`, and SSE accepts `Last-Event-ID` or an `after` cursor so clients can replay events without a snapshot/subscription gap. `GET /api/runs` returns only the newest 200 runs and has no pagination, so older run history is not discoverable from the board list. Host validation and Origin checks cover reads and writes, mutations require the bootstrap CSRF token, and paths are resolved under an explicit project and run/artifact allowlist. The app binds to 127.0.0.1; it does not expose a remote job service.
 

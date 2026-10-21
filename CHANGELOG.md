@@ -1,3 +1,15 @@
+# Changelog
+
+## v0.6.0 — Consumable CLI work (qualification pending)
+
+- Added the `software-factory` package entry point, minimal project initialization, and installed supervisor forwarding with consumer-owned configuration and state.
+- Added direct-wheel and sdist-derived-wheel artifact checks plus Windows/Linux CI coverage. The docs and verification matrix describe remaining release and native-host checks; this work does not claim live qualification.
+- The installed lifecycle covers `init`, `doctor`, `run`, and `status`; Windows wheel and sdist-derived-wheel tests exercise initialization, readiness, and dry-run status. Native-host, provider, Linux artifact, and final release qualification remain pending in the CLI matrix.
+
+## v0.5 — Local dashboard and durable events
+
+- Added the optional loopback dashboard, SQLite-backed run/event history, live/demo separation, event replay, and evidence-based run-state projection.
+
 ## v0.4 — Adversarial model tier & verification review
 
 - Split premium read-only Build Orchestrator from low-cost code-writing Build Worker; premium Planning Orchestrator retained.
@@ -7,8 +19,6 @@
 - Existing npm/yarn/pnpm gate script definitions and referenced local gate scripts are integrity-checked against their pre-build versions.
 - Strict structured output validation, including new dispatch/triage schema.
 - Adversarial regression tests and documented residual operational risks.
-
-# Changelog
 
 ## v0.3 — 2026-10-20
 
