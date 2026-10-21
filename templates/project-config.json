@@ -1,0 +1,47 @@
+{
+  "providers": {
+    "planner": "codex",
+    "build_orchestrator": "codex",
+    "builder": "codex",
+    "testing": "codex",
+    "architecture": "codex",
+    "ui": "codex",
+    "ux": "codex",
+    "security": "codex"
+  },
+  "models": {
+    "planner": "gpt-6-sol",
+    "build_orchestrator": "gpt-6-sol",
+    "builder": "gpt-6-luna",
+    "testing": "gpt-6-luna",
+    "architecture": "gpt-6-luna",
+    "ui": "gpt-6-luna",
+    "ux": "gpt-6-luna",
+    "security": "gpt-6-luna"
+  },
+  "max_review_rounds": 3,
+  "max_agent_seconds": 1200,
+  "max_gate_seconds": 600,
+  "claude_max_turns": 60,
+  "claude_budget_usd_per_call": 10.0,
+  "required_gates": [
+    "tests",
+    "lint",
+    "security",
+    "build"
+  ],
+  "ui_required_gate": "ui_e2e",
+  "commands": {
+    "tests": [],
+    "lint": [],
+    "security": [],
+    "build": [],
+    "ui_e2e": []
+  },
+  "skills": {
+    "enabled": false,
+    "max_per_invocation": 4,
+    "max_chars_per_skill": 12000,
+    "note": "Skills remain disabled until explicitly configured."
+  }
+}
