@@ -80,7 +80,8 @@ class SkillRegistryTests(unittest.TestCase):
             subprocess.run(['git','add','.'],cwd=upstream,check=True)
             subprocess.run(['git','-c','user.name=Test','-c','user.email=test@example.test','commit','-qm','init'],cwd=upstream,check=True)
             sha=subprocess.check_output(['git','rev-parse','HEAD'],cwd=upstream,text=True).strip()
-            entry={'id':'example','source':'local','path':'skills/example/SKILL.md','git_blob':skillctl.git_blob_id(source_doc.read_bytes()),
+            canonical_doc = subprocess.check_output(['git','show','HEAD:skills/example/SKILL.md'],cwd=upstream)
+            entry={'id':'example','source':'local','path':'skills/example/SKILL.md','git_blob':skillctl.git_blob_id(canonical_doc),
                    'roles':['planner'],'phases':['plan'],'activation':'always','mode':'prompt'}
             source={'repo':'test/local','url':str(upstream),'branch':'main','commit':sha,'license':'MIT'}
             cat={'schema_version':1,'sources':{'local':source},'entries':[entry]}

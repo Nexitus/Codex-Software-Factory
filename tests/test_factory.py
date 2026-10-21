@@ -1,7 +1,6 @@
 import json
 import os
 from pathlib import Path
-import stat
 import subprocess
 import sys
 import tempfile
@@ -15,6 +14,7 @@ import factory
 class PolicyTests(unittest.TestCase):
     def test_fail_on_missing_gates(self):
         cfg = factory.read_json(factory.ROOT / 'factory.config.json')
+        cfg['required_gates'] = []
         with self.assertRaises(factory.FactoryFailure):
             factory.ensure_config(cfg)
 
@@ -46,6 +46,21 @@ class PolicyTests(unittest.TestCase):
             with self.assertRaises(factory.FactoryFailure):
                 factory.assert_protected(root, original, head)
 
+    def test_supervisor_event_authority_module_is_protected(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            authority = root / 'app' / 'events.py'
+            authority.parent.mkdir()
+            authority.write_text('emit = True\n', encoding='utf-8')
+            subprocess.run(['git', 'add', '.'], cwd=root, check=True)
+            subprocess.run(['git', '-c', 'user.name=Mock', '-c', 'user.email=mock@example.test', 'commit', '-qm', 'base'], cwd=root, check=True)
+            original = factory.protected_snapshot(root)
+            head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+            authority.write_text('emit = False\n', encoding='utf-8')
+            with self.assertRaises(factory.FactoryFailure):
+                factory.assert_protected(root, original, head)
+
     def test_install_merges_without_overwrite(self):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
@@ -59,8 +74,30 @@ class PolicyTests(unittest.TestCase):
             self.assertIn('Software Factory Instructions', (root / 'AGENTS.md').read_text())
             self.assertIn('node_modules/', (root / '.gitignore').read_text())
             self.assertTrue((root / 'factory.py').exists())
+            self.assertTrue((root / 'app' / 'server.py').exists())
+            subprocess.run(['git', 'add', '-A'], cwd=root, check=True)
+            subprocess.run(['git', '-c', 'user.name=InstallTest', '-c', 'user.email=install@example.test', 'commit', '-qm', 'installed scaffold'], cwd=root, check=True)
+            help_result = subprocess.run([sys.executable, str(root / 'factory.py'), '--help'], capture_output=True, text=True)
+            self.assertEqual(help_result.returncode, 0, help_result.stderr)
+            dry_run = subprocess.run([sys.executable, str(root / 'factory.py'), '--idea', 'safe installation smoke',
+                                      '--project', str(root), '--config', str(root / 'factory.config.json'), '--dry-run'],
+                                     capture_output=True, text=True)
+            self.assertEqual(dry_run.returncode, 0, dry_run.stderr)
+            self.assertIn('DRY RUN:', dry_run.stdout)
             again = subprocess.run([sys.executable, str(installer), str(root)], capture_output=True, text=True)
             self.assertNotEqual(again.returncode, 0)
+
+    def test_install_refuses_existing_app_directory_without_copying(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            (root / 'app').mkdir()
+            (root / 'app' / 'keep.py').write_text('KEEP = True\n', encoding='utf-8')
+            result = subprocess.run([sys.executable, str(factory.ROOT / 'install.py'), str(root)], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('app', result.stderr)
+            self.assertFalse((root / 'factory.py').exists())
+            self.assertEqual((root / 'app' / 'keep.py').read_text(encoding='utf-8'), 'KEEP = True\n')
 
     def test_complete_mocked_repair_loop(self):
         with tempfile.TemporaryDirectory() as t:
@@ -72,39 +109,39 @@ class PolicyTests(unittest.TestCase):
             (repo / 'spec.md').write_text('Make a widget.', encoding='utf-8')
             subprocess.run(['git', 'add', '.'], cwd=repo, check=True)
             subprocess.run(['git', '-c', 'user.name=Mock', '-c', 'user.email=mock@example.test', 'commit', '-qm', 'base'], cwd=repo, check=True)
-            fake_bin = root / 'bin'
-            fake_bin.mkdir()
-            fake = fake_bin / 'codex'
-            fake.write_text('''#!/usr/bin/env python3
-import json, pathlib, sys
-p = sys.stdin.read()
-repo = pathlib.Path.cwd()
-if 'ROLE: planner' in p:
-    data = {'summary': 'mock plan', 'ui_change': False, 'acceptance_criteria': [{'id':'A1','description':'widget','verification':'test gate'}], 'work_items':[{'id':'W1','description':'build widget','verification':'test gate'}], 'assumptions':[], 'risks':[]}
-elif 'ROLE: build_orchestrator' in p:
-    data = {'instructions':'implement minimal change, repair when blocked', 'verification_focus':['test gate'], 'risks':[]}
-elif 'PHASE: design' in p:
-    data = {'guidance':['add tests'], 'checks':['verify widget'], 'risks':[], 'blocking_questions':[]}
-elif 'ROLE: builder' in p:
-    if 'PHASE: repair' in p:
-        (repo / 'app.py').write_text('FIXED = True\\n')
-    else:
-        (repo / 'app.py').write_text('FIXED = False\\n')
-    data = {'summary':'implemented', 'files_changed':['app.py'], 'tests_added':['mock gate'], 'unresolved':[]}
-else:
-    fixed = 'FIXED = True' in (repo / 'app.py').read_text()
-    data = {'verdict': 'pass' if fixed else 'fail', 'findings': [] if fixed else [{'id':'T1', 'severity':'high', 'file':'app.py', 'evidence':'not fixed', 'remediation':'fix'}], 'checks':['mock'], 'limitations':[]}
-out = pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
-out.write_text(json.dumps(data))
-''', encoding='utf-8')
-            fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
             cfg = factory.read_json(factory.ROOT / 'factory.config.json')
             cfg['providers'] = {k: 'codex' for k in cfg['providers']}
             cfg['models'] = {k: ('gpt-6-sol' if k in factory.ORCHESTRATORS else 'gpt-6-luna') for k in cfg['providers']}
             cfg['required_gates'] = ['tests']
             cfg['commands'] = {'tests': [[sys.executable, '-c', "import pathlib; assert 'FIXED = True' in pathlib.Path('app.py').read_text()"]]}
             cfg['max_review_rounds'] = 2
-            with patch.dict(os.environ, {'PATH': str(fake_bin) + os.pathsep + os.environ.get('PATH', '')}):
+            real_run = subprocess.run
+
+            def provider_stub(argv, **kwargs):
+                if Path(argv[0]).name.lower() != 'codex':
+                    return real_run(argv, **kwargs)
+                prompt = kwargs.get('input', '')
+                repo = Path(kwargs['cwd'])
+                if 'ROLE: planner' in prompt:
+                    data = {'summary': 'mock plan', 'ui_change': False, 'acceptance_criteria': [{'id':'A1','description':'widget','verification':'test gate'}], 'work_items':[{'id':'W1','description':'build widget','verification':'test gate'}], 'assumptions':[], 'risks':[]}
+                elif 'ROLE: build_orchestrator' in prompt:
+                    data = {'instructions':'implement minimal change, repair when blocked', 'verification_focus':['test gate'], 'risks':[]}
+                elif 'PHASE: design' in prompt:
+                    data = {'guidance':['add tests'], 'checks':['verify widget'], 'risks':[], 'blocking_questions':[]}
+                elif 'ROLE: builder' in prompt:
+                    if 'PHASE: repair' in prompt:
+                        (repo / 'app.py').write_text('FIXED = True\n')
+                    else:
+                        (repo / 'app.py').write_text('FIXED = False\n')
+                    data = {'summary':'implemented', 'files_changed':['app.py'], 'tests_added':['mock gate'], 'unresolved':[]}
+                else:
+                    fixed = 'FIXED = True' in (repo / 'app.py').read_text()
+                    data = {'verdict': 'pass' if fixed else 'fail', 'findings': [] if fixed else [{'id':'T1', 'severity':'high', 'file':'app.py', 'evidence':'not fixed', 'remediation':'fix'}], 'checks':['mock'], 'limitations':[]}
+                output_path = Path(argv[argv.index('--output-last-message') + 1])
+                output_path.write_text(json.dumps(data), encoding='utf-8')
+                return subprocess.CompletedProcess(argv, 0, '', '')
+
+            with patch('factory.subprocess.run', side_effect=provider_stub):
                 result = factory.do_work(repo / 'spec.md', repo, cfg, repo / '.factory' / 'runs' / 'mock', False)
             self.assertEqual(result, 0)
             report = factory.read_json(repo / '.factory' / 'runs' / 'mock' / 'DELIVERY.json')
@@ -141,20 +178,19 @@ class StructuredOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
             subprocess.run(['git', 'init', '-q'],cwd=root,check=True)
-            mocked = root/'codex'
-            mocked.write_text('''#!/usr/bin/env python3
-import json,sys,pathlib
-p=sys.stdin.read()
-out=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
-if 'ROLE: builder' in p:
-    out.write_text(json.dumps({'summary':'ok','files_changed':['a.py'],'tests_added':['t.py'],'unresolved':[]}))
-else:
-    out.write_text(json.dumps({'verdict':'pass','findings':[],'checks':['inspected a.py line 1'],'limitations':[]}))
-''')
-            mocked.chmod(mocked.stat().st_mode|stat.S_IXUSR)
             cfg = factory.read_json(factory.ROOT/'factory.config.json')
             cfg['providers'] = {k:'codex' for k in cfg['providers']}
-            with patch.dict(os.environ, {'PATH': str(root) + os.pathsep + os.environ.get('PATH', '')}):
+            real_run = subprocess.run
+
+            def provider_stub(argv, **kwargs):
+                if Path(argv[0]).name.lower() != 'codex':
+                    return real_run(argv, **kwargs)
+                prompt = kwargs.get('input', '')
+                output = {'summary':'ok','files_changed':['a.py'],'tests_added':['t.py'],'unresolved':[]} if 'ROLE: builder' in prompt else {'verdict':'pass','findings':[],'checks':['inspected a.py line 1'],'limitations':[]}
+                Path(argv[argv.index('--output-last-message') + 1]).write_text(json.dumps(output), encoding='utf-8')
+                return subprocess.CompletedProcess(argv, 0, '', '')
+
+            with patch('factory.subprocess.run', side_effect=provider_stub):
                 builder = factory.execute_agent('builder','build',{},cfg,root,root/'b')
                 reviewer = factory.execute_agent('security','review',{},cfg,root,root/'r')
             self.assertEqual(builder['summary'],'ok')
@@ -230,26 +266,27 @@ class AdversarialRoutingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             root=Path(t)
             subprocess.run(['git','init','-q'],cwd=root,check=True)
-            fake=root/'codex'
-            fake.write_text('''#!/usr/bin/env python3
-import json,sys,pathlib
-p=sys.stdin.read()
-out=pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1])
-if '--model' not in sys.argv: sys.exit(6)
-model=sys.argv[sys.argv.index('--model')+1]
-role=p.split('ROLE: ')[1].split('\\n')[0]
-if model != ('gpt-6-sol' if role in ('planner','build_orchestrator') else 'gpt-6-luna'): sys.exit(7)
-if role == 'build_orchestrator':
-    data={'instructions':'implement', 'verification_focus':['tests'], 'risks':[]}
-else:
-    data={'summary':'ok', 'files_changed':['a.py'], 'tests_added':['t.py'], 'unresolved':[]}
-out.write_text(json.dumps(data))
-''')
-            fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
             cfg=json.loads(json.dumps(self.config))
             cfg['providers']={role:'codex' for role in factory.ALL_ROLES}
             cfg['models']={role:('gpt-6-sol' if role in factory.ORCHESTRATORS else 'gpt-6-luna') for role in factory.ALL_ROLES}
-            with patch.dict(os.environ, {'PATH':str(root)+os.pathsep+os.environ.get('PATH','')}):
+            real_run = subprocess.run
+
+            def provider_stub(argv, **kwargs):
+                if Path(argv[0]).name.lower() != 'codex':
+                    return real_run(argv, **kwargs)
+                prompt = kwargs.get('input', '')
+                if '--model' not in argv:
+                    return subprocess.CompletedProcess(argv, 6, '', 'model missing')
+                model = argv[argv.index('--model') + 1]
+                role = prompt.split('ROLE: ')[1].splitlines()[0]
+                expected = 'gpt-6-sol' if role in ('planner', 'build_orchestrator') else 'gpt-6-luna'
+                if model != expected:
+                    return subprocess.CompletedProcess(argv, 7, '', 'wrong model')
+                data = {'instructions':'implement', 'verification_focus':['tests'], 'risks':[]} if role == 'build_orchestrator' else {'summary':'ok', 'files_changed':['a.py'], 'tests_added':['t.py'], 'unresolved':[]}
+                Path(argv[argv.index('--output-last-message') + 1]).write_text(json.dumps(data), encoding='utf-8')
+                return subprocess.CompletedProcess(argv, 0, '', '')
+
+            with patch('factory.subprocess.run', side_effect=provider_stub):
                 high=factory.execute_agent('build_orchestrator','dispatch',{},cfg,root,root/'high')
                 low=factory.execute_agent('builder','build',{},cfg,root,root/'low')
             self.assertEqual(high['instructions'],'implement')
@@ -295,26 +332,28 @@ class ClaudeModelEnforcementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             root=Path(t)
             subprocess.run(['git','init','-q'],cwd=root,check=True)
-            shim=root/'claude'
-            shim.write_text('''#!/usr/bin/env python3
-import sys,json
-args=sys.argv
-if '--model' not in args: sys.exit(11)
-model=args[args.index('--model')+1]
-prompt=args[-1]
-role=prompt.split('ROLE: ')[1].split('\\n')[0]
-if role == 'build_orchestrator':
-  if model != 'claude-opus-5-5': sys.exit(12)
-  result={'instructions':'make minimal patch','verification_focus':['unit tests'],'risks':[]}
-elif role == 'builder':
-  if model != 'claude-haiku-5-5': sys.exit(13)
-  result={'summary':'patched','files_changed':['app.py'],'tests_added':['test_app.py'],'unresolved':[]}
-else: sys.exit(14)
-print(json.dumps({'structured_output':result}))
-''')
-            shim.chmod(shim.stat().st_mode | stat.S_IXUSR)
             cfg=factory.read_json(factory.ROOT/'factory.config.json')
-            with patch.dict(os.environ,{'PATH':str(root)+os.pathsep+os.environ.get('PATH','')}):
+            cfg['providers'] = {role: 'claude' for role in factory.ALL_ROLES}
+            cfg['models'] = {role: ('claude-opus-5-5' if role in factory.ORCHESTRATORS else 'claude-haiku-5-5') for role in factory.ALL_ROLES}
+            real_run = subprocess.run
+
+            def provider_stub(argv, **kwargs):
+                if Path(argv[0]).name.lower() != 'claude':
+                    return real_run(argv, **kwargs)
+                if '--model' not in argv:
+                    return subprocess.CompletedProcess(argv, 11, '', 'model missing')
+                model = argv[argv.index('--model') + 1]
+                prompt = argv[-1]
+                role = prompt.split('ROLE: ')[1].splitlines()[0]
+                if role == 'build_orchestrator' and model == 'claude-opus-5-5':
+                    result = {'instructions':'make minimal patch','verification_focus':['unit tests'],'risks':[]}
+                elif role == 'builder' and model == 'claude-haiku-5-5':
+                    result = {'summary':'patched','files_changed':['app.py'],'tests_added':['test_app.py'],'unresolved':[]}
+                else:
+                    return subprocess.CompletedProcess(argv, 14, '', 'unexpected role or model')
+                return subprocess.CompletedProcess(argv, 0, json.dumps({'structured_output':result}), '')
+
+            with patch('factory.subprocess.run', side_effect=provider_stub):
                 high=factory.execute_agent('build_orchestrator','dispatch',{},cfg,root,root/'dispatch')
                 low=factory.execute_agent('builder','build',{},cfg,root,root/'build')
             self.assertEqual(high['instructions'],'make minimal patch')

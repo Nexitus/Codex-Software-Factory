@@ -8,9 +8,14 @@ import sys
 
 HOME = Path(__file__).resolve().parent
 SPECIAL = {"AGENTS.md", "CLAUDE.md", ".gitignore"}
-SKIP = {"install.py", "__pycache__"}
-INSTALL_TOP = {"factory.py", "skillctl.py", "factory.config.json", "POLICY.md", "AGENTS.md", "CLAUDE.md", ".gitignore", "FACTORY_SETUP.md"}
-INSTALL_DIRS = {"roles", ".claude", ".agents", "examples", "specs", "skills"}
+SKIP = {"install.py", "__pycache__", "node_modules", "dist", ".factory", ".pytest_cache"}
+INSTALL_TOP = {"factory.py", "skillctl.py", "factory.config.json", "POLICY.md", "AGENTS.md", "CLAUDE.md", ".gitignore",
+               "FACTORY_SETUP.md", "README.md", "dashboard.py", "dashboard.projects.example.json", "requirements.txt",
+               "requirements-dev.txt", "package.json", "package-lock.json", "specs/kanban-control-center-v05.md",
+               "docs/kanban-control-center-v05-verification.md", "dashboard/vite.config.ts", "dashboard/tsconfig.json",
+               "dashboard/tailwind.config.cjs", "dashboard/postcss.config.cjs", "dashboard/index.html",
+               "start-dashboard.ps1", "start-dashboard.sh"}
+INSTALL_DIRS = {"roles", ".claude", ".agents", "examples", "specs", "skills", "app", "dashboard"}
 
 
 def main():
@@ -22,6 +27,10 @@ def main():
         print("ERROR: target must be an existing Git checkout", file=sys.stderr)
         return 2
     srcs = [f for f in HOME.rglob("*") if f.is_file() and (str(f.relative_to(HOME)) in INSTALL_TOP or f.relative_to(HOME).parts[0] in INSTALL_DIRS) and not any(x in SKIP for x in f.relative_to(HOME).parts) and f.suffix != '.pyc']
+    directory_clashes = [name for name in ("app", "dashboard") if (repo / name).exists() and any(f.relative_to(HOME).parts[0] == name for f in srcs)]
+    if directory_clashes:
+        print("ERROR: refusing to overlay existing scaffold directories: " + ", ".join(directory_clashes), file=sys.stderr)
+        return 2
     clashes = [str(f.relative_to(HOME)) for f in srcs if str(f.relative_to(HOME)) not in SPECIAL and (repo / f.relative_to(HOME)).exists()]
     if clashes:
         print("ERROR: refusing to overwrite existing files:\n" + "\n".join(clashes), file=sys.stderr)

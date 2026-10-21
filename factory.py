@@ -6,18 +6,32 @@ Use inside an isolated development workspace. Does not push, merge or deploy.
 from __future__ import annotations
 
 import argparse
+import contextvars
 import hashlib
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import shlex
+import shutil
+import sqlite3
 import subprocess
 import sys
+import threading
 import time
-import shutil
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+from app.checkout_lock import (
+    CheckoutBusy,
+    CheckoutQuarantined,
+    checkout_lock,
+    claim_checkout,
+)
+from app.events import assert_no_orphaned_run, event_context, redact, register_cli_run
+from app.events import emit as emit_event
+from app.process_guard import process_birth
 from skillctl import get_skill_context
 
 ROOT = Path(__file__).resolve().parent
@@ -55,11 +69,25 @@ ALLOWED_MODELS = {
     "claude": {"orchestrator": {"claude-opus-5-5", "claude-opus-5", "claude-opus-4-8", "opus"},
                "worker": {"claude-haiku-5-5", "claude-haiku-4-5-20251001", "haiku"}},
 }
-PROTECTED = ["factory.py", "factory.config.json", "POLICY.md", "AGENTS.md", "CLAUDE.md", ".agents", ".claude", "roles", ".github", ".gitignore", "skills", "skillctl.py"]
+PROTECTED = ["factory.py", "factory.config.json", "POLICY.md", "AGENTS.md", "CLAUDE.md", ".agents", ".claude", "roles", ".github", ".gitignore", "skills", "skillctl.py",
+             "app/__init__.py", "app/events.py", "app/projector.py", "app/checkout_lock.py", "app/process_guard.py"]
 
 
 class FactoryFailure(RuntimeError):
     pass
+
+
+class AgentTimedOut(FactoryFailure):
+    pass
+
+
+RUN_UNCLEAN: contextvars.ContextVar[threading.Event | None] = contextvars.ContextVar("factory_run_unclean", default=None)
+
+
+def _mark_unclean() -> None:
+    state = RUN_UNCLEAN.get()
+    if state is not None:
+        state.set()
 
 
 def dump(path: Path, obj: Any) -> None:
@@ -214,6 +242,9 @@ def ensure_config(config: dict, ui_hint: bool = False) -> None:
         commands = config.get("commands", {}).get(gate)
         if not isinstance(commands, list) or not commands or any(not isinstance(x, list) or not x or not all(isinstance(y, str) and y for y in x) for x in commands):
             raise FactoryFailure(f"Gate '{gate}' requires a nonempty list of argv arrays in factory.config.json")
+        if any(Path(argv[0]).name.lower() in {"true", "true.exe", "false", "false.exe", ":", "echo", "echo.exe"}
+               for argv in commands):
+            raise FactoryFailure(f"Gate '{gate}' contains a no-op placeholder instead of a verification command")
     for name, low, high in (("max_agent_seconds", 1, 3600), ("max_gate_seconds", 1, 1800), ("claude_max_turns", 1, 200)):
         value = config.get(name)
         if type(value) is not int or not (low <= value <= high):
@@ -299,6 +330,8 @@ def run_gate(name: str, argvs: list[list[str]], cwd: Path, round_dir: Path, time
             content = f"$ {shlex.join(argv)}\n\nSTDOUT:\n{cp.stdout}\n\nSTDERR:\n{cp.stderr}\n"
         except (subprocess.TimeoutExpired, OSError) as exc:
             item = {"argv": argv, "exit_code": -1, "seconds": round(time.monotonic() - started, 2), "timed_out": isinstance(exc, subprocess.TimeoutExpired)}
+            if item["timed_out"]:
+                _mark_unclean()
             content = f"$ {shlex.join(argv)}\nERROR: {exc}\n"
         (round_dir / f"gate-{name}-{i}.log").write_text(content[-150000:], encoding="utf-8")
         item["log_file"] = str(round_dir / f"gate-{name}-{i}.log")
@@ -321,6 +354,24 @@ def get_prompt(role: str, phase: str, input_data: dict) -> str:
 
 
 def execute_agent(role: str, phase: str, payload: dict, config: dict, cwd: Path, out_dir: Path) -> dict:
+    started = time.monotonic()
+    emit_event("agent_started", {"role": role, "phase": phase, "provider": config["providers"][role], "model": config["models"][role]})
+    try:
+        result = _execute_agent(role, phase, payload, config, cwd, out_dir)
+    except AgentTimedOut:
+        _mark_unclean()
+        emit_event("agent_timed_out", {"role": role, "phase": phase, "provider": config["providers"][role], "model": config["models"][role]})
+        raise
+    except Exception:
+        emit_event("agent_failed", {"role": role, "phase": phase, "provider": config["providers"][role], "model": config["models"][role]})
+        raise
+    emit_event("agent_succeeded", {"role": role, "phase": phase, "provider": config["providers"][role],
+                                    "model": config["models"][role], "seconds": round(time.monotonic() - started, 2),
+                                    "verdict": result.get("verdict") if phase == "review" else None})
+    return result
+
+
+def _execute_agent(role: str, phase: str, payload: dict, config: dict, cwd: Path, out_dir: Path) -> dict:
     provider = config["providers"][role]
     schema_role = "design" if phase == "design" else "review" if phase == "review" else "orchestration" if role == "build_orchestrator" else role
     schema = SCHEMAS[schema_role]
@@ -354,7 +405,9 @@ def execute_agent(role: str, phase: str, payload: dict, config: dict, cwd: Path,
     try:
         cp = subprocess.run(cmd, input=prompt if provider == "codex" else None, capture_output=True, text=True, cwd=cwd,
                             timeout=int(config.get("max_agent_seconds", 1200)))
-    except (subprocess.TimeoutExpired, OSError) as exc:
+    except subprocess.TimeoutExpired as exc:
+        raise AgentTimedOut(f"{role}/{phase} provider timed out") from exc
+    except OSError as exc:
         raise FactoryFailure(f"{role}/{phase} provider failed to start or timed out: {exc}") from exc
     (out_dir / "stdout.log").write_text(cp.stdout[-500000:], encoding="utf-8")
     (out_dir / "stderr.log").write_text(cp.stderr[-200000:], encoding="utf-8")
@@ -401,29 +454,36 @@ def do_work(spec: Path, project: Path, config: dict, run_dir: Path, dry_run: boo
     run_dir.mkdir(parents=True, exist_ok=True)
     request = spec.read_text(encoding="utf-8")
     dump(run_dir / "manifest.json", {"created_utc": datetime.now(timezone.utc).isoformat(), "spec": str(spec), "project": str(project), "config": config, "model_routing": {role: {"provider":config["providers"][role], "model":config["models"][role], "tier":"orchestrator" if role in ORCHESTRATORS else "worker"} for role in ALL_ROLES}, "state": "started"})
+    emit_event("run_started", {"supervisor_run_id": run_dir.name, "max_rounds": config["max_review_rounds"]})
     if dry_run:
         dump(run_dir / "dry-run.json", {"planned_roles": ["planner", "build_orchestrator", "builder", *SPECIALISTS], "required_gates": config["required_gates"], "note": "No agents or gate commands were executed"})
+        emit_event("run_completed", {"delivery_status": "dry_run"})
         print(f"DRY RUN: {run_dir}")
         return 0
     # Plan -> design reviews -> Build -> deterministic gates + independent reviews -> repair loop.
     gate_baseline = gate_entrypoints(config, project, True)
     before_plan = source_fingerprint(project)
+    emit_event("stage_entered", {"stage": "Planning"})
     plan = execute_agent("planner", "plan", {"request": request}, config, project, run_dir / "plan")
+    emit_event("stage_completed", {"stage": "Planning"})
     if source_fingerprint(project) != before_plan:
         raise FactoryFailure("Planning orchestrator modified source; only Build Worker may write")
     ensure_config(config, plan["ui_change"])
     roles = ["testing", "architecture", "security"] + (["ui", "ux"] if plan["ui_change"] else [])
     designs = {}
+    emit_event("stage_entered", {"stage": "Design"})
     with ThreadPoolExecutor(max_workers=min(5, len(roles))) as pool:
-        jobs = {pool.submit(execute_agent, r, "design", {"request": request, "plan": plan}, config, project, run_dir / "design" / r): r for r in roles}
+        jobs = {pool.submit(contextvars.copy_context().run, execute_agent, r, "design", {"request": request, "plan": plan}, config, project, run_dir / "design" / r): r for r in roles}
         for fut in as_completed(jobs):
             designs[jobs[fut]] = fut.result()
+    emit_event("stage_completed", {"stage": "Design"})
     if source_fingerprint(project) != before_plan:
         raise FactoryFailure("Specialist design phase modified source; refusing unauthorized edits")
     questions = {r: d["blocking_questions"] for r, d in designs.items() if d["blocking_questions"]}
     if questions:
         dump(run_dir / "blocked-design.json", questions)
         raise FactoryFailure("Design has blocking questions; no code was changed. See blocked-design.json")
+    emit_event("stage_entered", {"stage": "Build"})
     dispatch = execute_agent("build_orchestrator", "dispatch", {"request": request, "plan": plan, "designs": designs,
                                "instruction": "Prepare precise, bounded implementation instructions for the low-cost Build Worker. No code edits."},
                              config, project, run_dir / "build-dispatch")
@@ -433,6 +493,7 @@ def do_work(spec: Path, project: Path, config: dict, run_dir: Path, dry_run: boo
     build_payload = {"request": request, "plan": plan, "designs": designs, "dispatch": dispatch,
                      "instruction": "Execute the dispatch instructions. Add actual tests. Run useful local checks."}
     build = execute_agent("builder", "build", build_payload, config, project, run_dir / "build-initial")
+    emit_event("stage_completed", {"stage": "Build"})
     assert_protected(project, original_snapshot, original_head)
     changed, _ = repo_status(project)
     if not changed:
@@ -440,13 +501,21 @@ def do_work(spec: Path, project: Path, config: dict, run_dir: Path, dry_run: boo
     if build["unresolved"]:
         print("Builder reports unresolved items; review and gates will still run, but release is blocked unless repaired.")
     for round_number in range(1, config["max_review_rounds"] + 1):
+        emit_event("round_incremented", {"round": round_number, "max_rounds": config["max_review_rounds"]})
+        emit_event("stage_entered", {"stage": "Review"})
         rd = run_dir / f"review-round-{round_number:02d}"
         rd.mkdir(parents=True, exist_ok=True)
         assert_protected(project, original_snapshot, original_head)
         assert_gate_integrity(config, project, gate_baseline, plan["ui_change"])
         snapshot_before_gates = source_fingerprint(project)
-        gates = {k: run_gate(k, v, project, rd, int(config.get("max_gate_seconds", 600)))
-                 for k, v in commands_for_gates(config, plan["ui_change"]).items()}
+        gates = {}
+        for k, v in commands_for_gates(config, plan["ui_change"]).items():
+            emit_event("gate_started", {"name": k, "round": round_number})
+            result = run_gate(k, v, project, rd, int(config.get("max_gate_seconds", 600)))
+            gates[k] = result
+            emit_event("gate_passed" if result["pass"] else "gate_failed", {"name": k, "round": round_number,
+                        "exit_code": result["commands"][-1]["exit_code"] if result["commands"] else -1,
+                        "timed_out": any(item["timed_out"] for item in result["commands"])})
         dump(rd / "gates.json", gates)
         if source_fingerprint(project) != snapshot_before_gates:
             raise FactoryFailure("Gate commands changed the source tree; verification must be repeatable and nonmutating")
@@ -456,13 +525,17 @@ def do_work(spec: Path, project: Path, config: dict, run_dir: Path, dry_run: boo
         if diff.returncode or changed_files.returncode:
             raise FactoryFailure("Unable to obtain code diff for review")
         with ThreadPoolExecutor(max_workers=min(5, len(roles))) as pool:
-            jobs = {pool.submit(execute_agent, r, "review", {"request": request, "plan": plan, "design": designs[r],
+            jobs = {pool.submit(contextvars.copy_context().run, execute_agent, r, "review", {"request": request, "plan": plan, "design": designs[r],
                                   "gate_results": gates, "round_number": round_number,
                                   "changed_files": changed_files.stdout, "diff_excerpt": diff.stdout[:50000],
                                   "instruction": "Independently review actual repository state and cite evidence. Never modify files."},
                                 config, project, rd / "reviews" / r): r for r in roles}
             for fut in as_completed(jobs):
                 reviews[jobs[fut]] = fut.result()
+        for role, review in reviews.items():
+            for finding in review.get("findings", []):
+                emit_event("finding_recorded", {**finding, "role": role, "round": round_number})
+        emit_event("stage_completed", {"stage": "Review"})
         dump(rd / "reviews.json", reviews)
         assert_protected(project, original_snapshot, original_head)
         if source_fingerprint(project) != snapshot_before_gates:
@@ -477,10 +550,17 @@ def do_work(spec: Path, project: Path, config: dict, run_dir: Path, dry_run: boo
             dump(run_dir / "DELIVERY.json", {"status": "verified_candidate", "review_rounds": round_number,
                                                 "request": request, "plan": plan, "gates": gates, "reviews": reviews,
                                                 "working_tree_changes": state, "note": "Not merged, pushed, or deployed. Verification is limited to configured checks."})
+            emit_event("delivery_verified", {"supervisor_run_id": run_dir.name, "round": round_number,
+                        "review_rounds": round_number, "delivery_status": "verified_candidate", "gates": gates,
+                        "finding_count": sum(len(review.get("findings", [])) for review in reviews.values())})
+            emit_event("run_completed", {"delivery_status": "verified_candidate"})
             print(f"VERIFIED CANDIDATE: {run_dir / 'DELIVERY.json'}")
             return 0
         if round_number == config["max_review_rounds"]:
             break
+        emit_event("repair_requested", {"round": round_number, "blocker_count": len(blockers)})
+        emit_event("stage_entered", {"stage": "Repair"})
+        emit_event("repair_started", {"round": round_number})
         triage = execute_agent("build_orchestrator", "triage", {"request": request, "plan": plan, "designs": designs,
                                  "blockers": blockers, "gate_results": gates, "reviews": reviews,
                                  "instruction": "Classify evidence, resolve contradictory findings, and define minimal repair instructions. Never waive a gate."},
@@ -492,10 +572,13 @@ def do_work(spec: Path, project: Path, config: dict, run_dir: Path, dry_run: boo
                           "blockers": blockers, "gate_results": gates, "reviews": reviews, "triage": triage,
                           "instruction": "Repair supported blocking defects. Explain and test changes. Never waive checks or alter governance."}
         build = execute_agent("builder", "repair", repair_payload, config, project, run_dir / f"repair-{round_number:02d}")
+        emit_event("stage_completed", {"stage": "Repair"})
         assert_protected(project, original_snapshot, original_head)
     dump(run_dir / "DELIVERY.json", {"status": "blocked", "review_rounds": config["max_review_rounds"],
                                       "blockers": blockers, "gate_results": gates, "reviews": reviews,
                                       "note": "No push/merge/deploy performed. Review latest evidence and retry with a new run."})
+    emit_event("run_blocked", {"supervisor_run_id": run_dir.name, "blockers": blockers, "review_rounds": config["max_review_rounds"]})
+    emit_event("run_completed", {"delivery_status": "blocked"})
     print(f"BLOCKED: {run_dir / 'DELIVERY.json'}", file=sys.stderr)
     return 2
 
@@ -568,6 +651,11 @@ def main() -> int:
     parser.add_argument("--project", type=Path, default=Path.cwd(), help="Target Git repository root")
     parser.add_argument("--config", type=Path, default=ROOT / "factory.config.json")
     parser.add_argument("--dry-run", action="store_true", help="Preflight only: do not invoke models or run gates")
+    parser.add_argument("--event-db", type=Path, default=Path(os.environ["FACTORY_EVENT_DB"]) if os.environ.get("FACTORY_EVENT_DB") else None,
+                        help="Optional SQLite event database for incremental run instrumentation")
+    parser.add_argument("--run-id", default=os.environ.get("FACTORY_RUN_ID"), help="Optional stable run ID for event instrumentation")
+    parser.add_argument("--queue-token", default=os.environ.get("FACTORY_QUEUE_TOKEN"), help=argparse.SUPPRESS)
+    parser.add_argument("--wait-for-lock", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.idea is not None and not args.idea.strip():
         parser.error("--idea must not be empty")
@@ -576,29 +664,77 @@ def main() -> int:
     if args.publish_pr and args.dry_run:
         parser.error("--dry-run and --publish-pr cannot be combined")
     project = args.project.resolve()
+    try:
+        from app.checkout_lock import canonical_checkout
+        project = canonical_checkout(project)
+    except ValueError as exc:
+        print(f"BLOCKED: {exc}", file=sys.stderr)
+        return 2
     cfg = read_json(args.config.resolve())
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     run_dir = project / ".factory" / "runs" / stamp
+    if args.run_id and not args.queue_token:
+        parser.error("--run-id is reserved for authenticated dashboard handoffs")
+    run_id = args.run_id or str(uuid.uuid4())
+    event_db = args.event_db or ROOT / ".factory" / "dashboard.sqlite3"
     try:
-        if args.idea:
-            input_spec = run_dir / "INPUT.md"
-            input_spec.parent.mkdir(parents=True, exist_ok=True)
-            input_spec.write_text("# Requested outcome\n\n" + args.idea.strip() + "\n", encoding="utf-8")
-        else:
-            input_spec = args.spec.resolve()
-        # Validate model routing and configured gates before any opt-in Git operation.
-        ensure_config(cfg)
-        if args.publish_pr:
-            prepare_publication(project, stamp, args.base)
-        outcome = do_work(input_spec, project, cfg, run_dir, args.dry_run)
-        if outcome == 0 and args.publish_pr:
-            publish_pr(project, run_dir, args.base)
-        return outcome
-    except (FactoryFailure, FileNotFoundError, json.JSONDecodeError) as exc:
-        run_dir.mkdir(parents=True, exist_ok=True)
-        dump(run_dir / "ERROR.json", {"status": "blocked", "error": str(exc)})
-        print(f"BLOCKED: {exc}\nDETAILS: {run_dir / 'ERROR.json'}", file=sys.stderr)
+        requirement = args.idea.strip() if args.idea else args.spec.resolve().read_text(encoding="utf-8") if args.spec and args.spec.exists() else ""
+        register_cli_run(event_db.resolve(), run_id, project, requirement, os.getpid(), process_birth(os.getpid()),
+                         args.queue_token, require_handoff=bool(args.run_id))
+    except (OSError, ValueError, sqlite3.Error):
+        print("BLOCKED: durable run event storage is unavailable", file=sys.stderr)
         return 2
+    try:
+        run_safety = threading.Event()
+        safety_token = RUN_UNCLEAN.set(run_safety)
+        with event_context(event_db, run_id, run_id):
+            try:
+                assert_no_orphaned_run(event_db.resolve(), project, run_id)
+                with checkout_lock(project, wait=args.wait_for_lock):
+                    claim = claim_checkout(project, run_id, os.getpid(), process_birth(os.getpid()))
+                    try:
+                        # Recheck under the acquired checkout lock to close the stale-run race.
+                        assert_no_orphaned_run(event_db.resolve(), project, run_id)
+                        if args.idea:
+                            input_spec = run_dir / "INPUT.md"
+                            input_spec.parent.mkdir(parents=True, exist_ok=True)
+                            input_spec.write_text("# Requested outcome\n\n" + str(redact(args.idea.strip())) + "\n", encoding="utf-8")
+                        else:
+                            input_spec = args.spec.resolve()
+                        ensure_config(cfg)
+                        if args.publish_pr:
+                            prepare_publication(project, stamp, args.base)
+                        outcome = do_work(input_spec, project, cfg, run_dir, args.dry_run)
+                        if outcome == 0 and args.publish_pr:
+                            publish_pr(project, run_dir, args.base)
+                        if not run_safety.is_set():
+                            claim.release_after_worker_exit()
+                        return outcome
+                    except (FactoryFailure, FileNotFoundError, json.JSONDecodeError) as exc:
+                        run_dir.mkdir(parents=True, exist_ok=True)
+                        safe_error = str(redact(str(exc)))[:1000]
+                        dump(run_dir / "ERROR.json", {"status": "blocked", "error_type": type(exc).__name__,
+                                                      "error": safe_error})
+                        emit_event("run_blocked", {"supervisor_run_id": run_dir.name, "error_type": type(exc).__name__,
+                                                   "error_summary": safe_error})
+                        emit_event("run_completed", {"delivery_status": "blocked"})
+                        if not run_safety.is_set():
+                            claim.release_after_worker_exit()
+                        print(f"BLOCKED: {safe_error}\nDETAILS: {run_dir / 'ERROR.json'}", file=sys.stderr)
+                        return 2
+            except (CheckoutBusy, CheckoutQuarantined, RuntimeError) as exc:
+                emit_event("run_blocked", {"reason": "checkout_unavailable", "error_type": type(exc).__name__})
+                emit_event("run_completed", {"delivery_status": "blocked"})
+                print(f"BLOCKED: {str(redact(str(exc)))[:1000]}", file=sys.stderr)
+                return 2
+            except KeyboardInterrupt:
+                _mark_unclean()
+                emit_event("run_interrupted", {"reason": "operator_interrupt", "attempt": "run"})
+                emit_event("run_completed", {"delivery_status": "interrupted", "attempt": "run"})
+                print("INTERRUPTED: prior worker tree may still be active; checkout remains quarantined.", file=sys.stderr)
+                return 130
+    finally:
+        RUN_UNCLEAN.reset(safety_token)
 
 
 if __name__ == "__main__":

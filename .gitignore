@@ -1,3 +1,15 @@
 .factory/
 __pycache__/
 *.pyc
+/.venv/
+/.factory/venv/
+/node_modules/
+/dashboard/node_modules/
+/dist/
+/dashboard/dist/
+/test-results/
+/playwright-report/
+/.pytest_cache/
+/.ruff_cache/
+/graphify-out/
+/.impeccable/

@@ -1,0 +1,29 @@
+{
+  "name": "agentic-software-factory",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config dashboard/vite.config.ts",
+    "test": "vitest --config dashboard/vitest.config.ts",
+    "lint": "tsc --noEmit -p dashboard/tsconfig.json",
+    "build": "tsc -p dashboard/tsconfig.json && vite build --config dashboard/vite.config.ts",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "lucide-react": "0.468.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "@vitejs/plugin-react": "6.1.2",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.7.3",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}
