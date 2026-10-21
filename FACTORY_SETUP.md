@@ -47,7 +47,7 @@ Existing projects that already received the legacy scaffold remain usable. `pyth
 
 ## Recover from setup problems
 
-- **Missing gate commands or an unready config:** `init` creates empty command lists for all required gates. Edit `factory.config.json` with real argv commands for every required gate, install the project tools, commit the config, and run `software-factory doctor --project <checkout>` to check local readiness. Do not add no-op commands.
+- **Missing gate commands or an unready config:** `init` creates empty command lists for all required gates. Edit `factory.config.json` with real argv commands for every required gate, install the project tools, commit the config, and run `software-factory doctor --project "/path/to/my-project"` to check local readiness. Do not add no-op commands.
 - **Invalid or conflicting project files:** preserve existing project files, review the reported paths, and correct the project config or integration file deliberately. Re-run `init` only after conflicts are resolved; it is not an upgrade command.
 - **Missing Codex CLI or host authentication:** install and authenticate the host using its own documented setup. The factory installer does not install the host, read credential files, or authenticate it. `doctor` checks local readiness only and does not prove provider access.
 - **CLI not found after `uv tool install`:** run `uv tool update-shell`, then open a new terminal or restart Codex Desktop so it sees the updated `PATH`. This changes the user shell configuration only when the operator runs it.
