@@ -1,7 +1,7 @@
 # Consumable factory CLI and harness integration
 
 Date: 2026-10-21
-Status: Approved by the user in chat on 2026-10-21. Implementation plan and separate maintenance execution approved; subagent gpt-6-luna xhigh build in progress.
+Status: Approved by the user in chat on 2026-10-21. Implementation and local qualification completed with GPT-6 Luna xhigh subagents; final source artifact replay and publication pending.
 UI change: false. Existing dashboard behavior remains in regression scope.
 
 ## Objective
@@ -105,7 +105,7 @@ Preserve the dirty working tree and review its existing dashboard work before ch
 
 Before publication, local rollback is limited to this task's changes. Consumer rollback uses the previous installed version/commit; project initialization does not delete old scaffold files or application data. Do not rewrite published history or remove evidence/state to recover from a failure.
 
-No additional product decision blocks the written spec. Execution conditions still requiring evidence are remote/network access, safe transfer of the existing uncommitted baseline, live Codex authentication/profile access, permission to invoke each harness, and a supervisor-compatible path for the maintainer exception. Treat unavailable checks as blockers to the corresponding readiness claims.
+No additional product decision blocks the written spec. Local source/package qualification and the Windows Codex installed-wheel fixture are complete; the fixture used the one-time user-approved host exception recorded below and does not establish OS or network isolation. Codex is the only live-qualified harness; Claude Code and OpenCode remain unverified and outside this release scope. Remaining release conditions are final documentation and tracked-file inventory review, rebuilding and qualifying artifacts from the final source revision, the already authorized normal push, and a fresh install pinned to the pushed commit followed by help/doctor smoke checks. No registry publication is implied.
 
 ## Documentation references
 
@@ -118,3 +118,7 @@ These sources were inspected during initial design. Verify the installed harness
 ## User scope amendment, 2026-10-21
 
 The user confirmed Claude Code is unavailable and requested only Codex for now. Live harness qualification and release readiness therefore require Codex Desktop and Codex CLI only. Keep the already implemented Claude Code/OpenCode adapter files as explicitly unverified integrations, without further authentication or live model requests. Their external HTTP403/503 readiness failures do not block this Codex-only release. All other checks and source-publication conditions remain in force.
+
+## One-time fixture execution approval, 2026-10-22
+
+After the security designer blocked the second disposable qualification fixture because the Windows host did not establish the normal ephemeral-container and restricted-network boundary, the user explicitly approved this fixture on Windows. This exception permits one controlled qualification using the already configured Python/Ruff gates, with no production data or deployment. Record the approval and tool provenance before the new run. Keep the blocked evidence, every gate, model routing, independent review, and all other controls. This does not change POLICY.md for normal factory runs or qualify unattended execution, container isolation, or restricted network egress.

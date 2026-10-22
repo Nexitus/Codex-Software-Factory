@@ -50,6 +50,19 @@ Existing projects that already received the legacy scaffold remain usable. `pyth
 - **Missing gate commands or an unready config:** `init` creates empty command lists for all required gates. Edit `factory.config.json` with real argv commands for every required gate, install the project tools, commit the config, and run `software-factory doctor --project "/path/to/my-project"` to check local readiness. Do not add no-op commands.
 - **Invalid or conflicting project files:** preserve existing project files, review the reported paths, and correct the project config or integration file deliberately. Re-run `init` only after conflicts are resolved; it is not an upgrade command.
 - **Missing Codex CLI or host authentication:** install and authenticate the host using its own documented setup. The factory installer does not install the host, read credential files, or authenticate it. `doctor` checks local readiness only and does not prove provider access.
+### Windows uv permission workaround
+
+On the tested Windows host, uv's managed-Python launcher could not start in the normal Codex CLI workspace, and installing from a `.codex` worktree failed with `Permission denied`. Using an accessible installed system Python, copy mode, and uv tool directories outside `.codex` worked. For example, in PowerShell (replace the Python path with one installed and accessible to your host):
+
+```powershell
+$env:UV_TOOL_DIR = Join-Path $env:LOCALAPPDATA 'uv-tools'
+$env:UV_TOOL_BIN_DIR = Join-Path $env:LOCALAPPDATA 'uv-bin'
+uv tool install --python "C:\Program Files\Python314\python.exe" --link-mode copy "git+https://github.com/Nexitus/Codex-Software-Factory.git@<verified-commit>"
+$env:PATH = "$env:UV_TOOL_BIN_DIR;$env:PATH"
+```
+
+The command uses only the current PowerShell session's environment. The tested setup used a tool environment outside `.codex`; the example is specific to this failure mode and is not required on every Windows installation. It does not change global ACLs or bypass sandbox permissions. `uv tool dir` and `uv tool dir --bin` show the selected locations; see uv's [storage reference](https://docs.astral.sh/uv/reference/storage/) for `UV_TOOL_DIR` and `UV_TOOL_BIN_DIR`.
+
 - **CLI not found after `uv tool install`:** run `uv tool update-shell`, then open a new terminal or restart Codex Desktop so it sees the updated `PATH`. This changes the user shell configuration only when the operator runs it.
 - **Skill not visible in Codex:** Codex detects skill changes automatically. If `.agents/skills/software-factory/SKILL.md` is still missing from the selector after project initialization, restart Codex and verify the checkout is open.
 - **Generated files:** `init` writes `factory.config.json`, the selected host skill file(s), and a marked `.factory/` ignore block only when that state directory is not already ignored. Run state is created later under `.factory/`; generated configuration and skills remain in the consumer checkout.
@@ -77,17 +90,17 @@ software-factory run specs/my-feature.md --project "/path/to/my-project"
 software-factory status --project "/path/to/my-project"
 ```
 
-`doctor` and `status` are implemented. The Windows artifact suite exercises unready and ready doctor results, empty status, and status after a consumer dry run from both the direct wheel and sdist-derived wheel. Broader run-state fixtures and native-host qualification remain pending; see the [verification matrix](docs/consumable-factory-cli-verification.md). A dry run checks local preflight and writes run/event state but does not invoke models or project gates. A normal run uses the existing supervisor, configured routing and gates, and independent review flow. Run reports and CLI state are stored beneath the target checkout's ignored `.factory/` directory.
+`doctor` and `status` are implemented. The Windows artifact suite exercises unready and ready doctor results, empty status, and status after a consumer dry run from both the direct wheel and sdist-derived wheel. The verification matrix records current Windows Codex CLI and Desktop smoke checks plus the separate live-pipeline state. The native smoke commands stopped at preflight; they do not prove provider access or a verified candidate. A dry run checks local preflight and writes run/event state but does not invoke models or project gates. A normal run uses the existing supervisor, configured routing and gates, and independent review flow. Run reports and CLI state are stored beneath the target checkout's ignored `.factory/` directory.
 
 A `verified_candidate` result is evidence that configured gates and required reviews passed. It does not mean the work is approved, merged, deployed, or guaranteed defect-free. The run does not update consumer projects automatically.
 
 ## Host invocation instructions
 
-Initialization creates instructions for the selected hosts, but the release's native-host qualification is still pending. These are the documented invocation forms for the current adapters; they do not prove successful discovery or execution in an installed host. Claude Code and OpenCode templates are retained but explicitly unverified; their presence does not make them supported live hosts for the Codex-only release.
+Initialization creates instructions for the selected hosts. Windows smoke checks confirmed automatic skill discovery and CLI invocation in Codex CLI, and invocation in Codex Desktop after an explicit skill-read prompt; `doctor`, dry-run, and `status` returned exit 0 on both. These commands remained at preflight and do not prove provider access or a completed run. Desktop automatic picker/discovery UI behavior remains unverified. Claude Code and OpenCode templates are retained but explicitly unverified; their presence does not make them supported live hosts for the Codex-only release.
 
 | Host | Project setup and invocation |
 | --- | --- |
-| Codex Desktop | Open the initialized checkout in Codex Desktop. In the prompt, invoke `$software-factory` and describe the request. |
+| Codex Desktop | Open the initialized checkout in Codex Desktop. In the prompt, ask it to read `.agents/skills/software-factory/SKILL.md`, then describe the request. |
 | Codex CLI | Start `codex` from the initialized checkout, then invoke `$software-factory` with the request in the prompt. |
 | Claude Code | Start `claude` from the initialized checkout. The retained `.claude/skills/software-factory/SKILL.md` describes the intended `/software-factory` invocation; host discovery and execution remain unverified. |
 | OpenCode | Start `opencode` from the initialized checkout and ask it in natural language to use the `software-factory` skill for the request. This is an unverified prompting example, not a confirmed native command or live integration. |
