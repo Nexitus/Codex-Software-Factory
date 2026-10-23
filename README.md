@@ -1,16 +1,12 @@
 # Codex Software Factory
 
-A local Python CLI and optional event-backed dashboard for a supervised software-development workflow. The deterministic supervisor routes planning, design, implementation, configured gates, and independent reviews, then reports a verified candidate or a blocked run. A passing result means only that configured checks and reviews passed.
+Codex Software Factory is a local Python CLI and optional event-backed dashboard for supervised software development. Runtime `20e13a8` passed 111 tests on Windows and Linux and its installed fixture produced `verified_candidate` with all four gates and three reviews passing.
 
-> **Qualification status:** Installed-wheel run `20261023T000421478604Z` qualified runtime source `20e13a85348578b7aa35f5cc4862be2e2b0b2595` with wheel SHA-256 `4c29dcd3bff208e6c48fb7eaa02686b4f4a3ba401bc843efd0d19a6ba582cc90`. It produced `verified_candidate` after one review round: all four configured gates exited 0, all three independent reviews passed with zero findings, and the final blocker list was empty. Installed `status` exited 0 for run `488ea0ad-450e-439a-b0ce-92b123c033e1` and matched the delivery path. This disposable Windows fixture used the one-time user-approved host exception; it does not establish OS/network isolation or unattended security. The earlier source-475 candidate and two blocked attempts remain historical evidence. Native Codex execution on Linux, Claude Code, and OpenCode remain unqualified.
->
-> Hosted CI run `39875562260` passed on Windows and Ubuntu for test-only commit `379ab47125a7ba15b0c006c3c5b94e300f9dfc5c`. The role-qualified source `20e13a85348578b7aa35f5cc4862be2e2b0b2595` passed its 111-test Windows and Linux suites and the installed fixture pipeline. The source/docs commit is not yet pushed; final documentation review, CI for the final pushed revision, and a fresh commit-pinned remote install remain pending.
->
-> The copy-ready install commands below are pinned to the exact runtime-qualified commit `20e13a85348578b7aa35f5cc4862be2e2b0b2595`. The one-time fixture host exception remains limited to that disposable qualification, and the final remote install has not yet been verified. No tagged GitHub or package-registry release has been published. See the [revision-bound verification matrix](docs/consumable-factory-cli-verification.md) for evidence and limits.
+At checkpoint `dd1eba4`, the remote SHA matched; Windows/Ubuntu CI, fresh Git installs, consumer smoke checks, and Windows Codex Desktop/CLI preflight passed. The approved Windows-host fixture does not qualify OS/network isolation or unattended security. Linux-native Codex, Claude Code, OpenCode, and `pipx` remain unverified; no PyPI or tagged release is implied. See the [verification matrix](docs/consumable-factory-cli-verification.md).
 
 ## Install
 
-Install the runtime-qualified source commit from the existing [Nexitus/Codex-Software-Factory](https://github.com/Nexitus/Codex-Software-Factory). Commit `20e13a85348578b7aa35f5cc4862be2e2b0b2595` is not pushed yet, so these Git commands become fetchable after the pending normal push:
+Install the runtime-qualified source from the existing [Nexitus/Codex-Software-Factory](https://github.com/Nexitus/Codex-Software-Factory). The published documentation revision includes this runtime; exact push and fresh-install evidence is in the verification matrix:
 
 ```sh
 uv tool install --python python --link-mode copy "git+https://github.com/Nexitus/Codex-Software-Factory.git@20e13a85348578b7aa35f5cc4862be2e2b0b2595"
@@ -24,17 +20,17 @@ Linux can use uv with its installed Python on PATH:
 uv tool install --python python3 --link-mode copy "git+https://github.com/Nexitus/Codex-Software-Factory.git@20e13a85348578b7aa35f5cc4862be2e2b0b2595"
 ```
 
-The uv commands above pin the exact fixture-qualified runtime source `20e13a85348578b7aa35f5cc4862be2e2b0b2595`; a fresh remote install from this revision remains to be verified after the normal push.
+The Windows command above was exercised from a fresh uv cache and tool directory. Its installed `direct_url.json` recorded runtime commit `20e13a85348578b7aa35f5cc4862be2e2b0b2595` and version `0.6.0`; the exact logs and the separate published-revision consumer smoke are in the verification matrix.
 
-`pipx` is an alternative, but it was not exercised by this runtime qualification. After the normal push, install the same exact source revision with:
+`pipx` is an alternative, but it was not exercised by this runtime qualification. The command below installs the same exact source revision:
 
 ```sh
 pipx install "git+https://github.com/Nexitus/Codex-Software-Factory.git@20e13a85348578b7aa35f5cc4862be2e2b0b2595"
 ```
 
-See the [publication checklist](docs/PUBLISH.md) for the remaining push and remote verification steps.
+See the [verification matrix](docs/consumable-factory-cli-verification.md) for publication and install evidence.
 
-The role-qualified wheel and source archive were built from commit `20e13a85348578b7aa35f5cc4862be2e2b0b2595`; the wheel passed the full installed fixture pipeline, and Windows/Linux each passed 111 source tests. Their SHA-256 values and the exact run evidence are in the [revision-bound verification matrix](docs/consumable-factory-cli-verification.md). The older fresh remote install at 19939337 remains historical; the final push, hosted CI, and fresh remote install for this source are pending.
+The role-qualified wheel and source archive were built from runtime commit `20e13a85348578b7aa35f5cc4862be2e2b0b2595`; artifact hashes, qualification, hosted CI, and fresh-install evidence are in the [revision-bound verification matrix](docs/consumable-factory-cli-verification.md).
 
 The CLI does not install or authenticate any coding CLI. Python 3.10+ and Git are required. The first release targets Windows PowerShell 7 and Linux; macOS is not qualified.
 
