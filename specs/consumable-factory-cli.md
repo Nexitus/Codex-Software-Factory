@@ -1,7 +1,7 @@
 # Consumable factory CLI and harness integration
 
 Date: 2026-10-21
-Status: Approved by the user in chat on 2026-10-21. Implementation and local qualification completed with GPT-6 Luna xhigh subagents; final source artifact replay and publication pending.
+Status: Approved by the user in chat on 2026-10-21. Runtime qualification is complete for `20e13a85348578b7aa35f5cc4862be2e2b0b2595`: Windows and Linux each passed 111 tests, and its installed wheel produced a verified candidate after one review round with all gates and reviews passing. Hosted CI run `39875562260` passed on Windows and Ubuntu for predecessor test-only commit `379ab47125a7ba15b0c006c3c5b94e300f9dfc5c`. Final documentation/inventory review, normal push of the role-qualified source, CI for the final pushed revision, and a fresh remote install remain pending.
 UI change: false. Existing dashboard behavior remains in regression scope.
 
 ## Objective
@@ -21,7 +21,7 @@ An operator can install the factory once, initialize an existing Git project, an
 
 ### Maintainer exception
 
-The user's approval authorizes preparing changes to factory packaging, CLI entry points, installer, harness skills, their tests, and documentation. Necessary resource/configuration/state-path changes in `factory.py` and `skillctl.py` are within that scope. Necessary CI packaging checks may be proposed in the implementation plan. This is maintenance of the factory itself, not permission for generated application runs to edit their supervisor.
+The user's approval authorizes preparing changes to factory packaging, CLI entry points, installer, harness skills, their tests, and documentation. Necessary resource/configuration/state-path changes in `factory.py` and `skillctl.py` are within that scope. Necessary CI packaging checks may be proposed in the implementation plan. This is maintenance of the factory itself, not permission for generated application runs to edit their supervisor. On 2026-10-22, the user explicitly approved the exact one-paragraph Builder reporting clarification committed in `roles/builder.md` at `20e13a85348578b7aa35f5cc4862be2e2b0b2595`. The approval is limited to that paragraph; it does not change gates, review controls, supervisor behavior, model routing, or permissions. The role-qualified runtime and installed fixture now pass; final publication checks remain pending.
 
 Only the configured low-tier Builder implements code/tests. Coordination and independent review remain read-only. Do not remove protected-file checks, weaken model routing, lower gates, edit reviewer findings, or alter application-run publication controls. If the supervisor cannot express this scoped maintenance exception safely, report the precise conflict before implementation rather than disabling protection.
 
@@ -105,7 +105,7 @@ Preserve the dirty working tree and review its existing dashboard work before ch
 
 Before publication, local rollback is limited to this task's changes. Consumer rollback uses the previous installed version/commit; project initialization does not delete old scaffold files or application data. Do not rewrite published history or remove evidence/state to recover from a failure.
 
-No additional product decision blocks the written spec. Local source/package qualification and the Windows Codex installed-wheel fixture are complete; the fixture used the one-time user-approved host exception recorded below and does not establish OS or network isolation. Codex is the only live-qualified harness; Claude Code and OpenCode remain unverified and outside this release scope. Remaining release conditions are final documentation and tracked-file inventory review, rebuilding and qualifying artifacts from the final source revision, the already authorized normal push, and a fresh install pinned to the pushed commit followed by help/doctor smoke checks. No registry publication is implied.
+Runtime qualification is complete for source `20e13a85348578b7aa35f5cc4862be2e2b0b2595`: its Windows and Linux test suites passed 111 tests each, and the installed wheel completed one real fixture review round with all four gates and all three reviews passing, zero findings, no final blockers, and a matching `verified_candidate` delivery. This disposable Windows fixture used the one-time user-approved host exception recorded below; it does not establish OS/network isolation or unattended security. Native Codex execution on Linux remains unqualified, as do Claude Code and OpenCode. Hosted CI run 39875562260 passed on Windows and Ubuntu for predecessor test-only commit 379ab47125a7ba15b0c006c3c5b94e300f9dfc5c. Final docs/inventory review, normal push of the role-qualified source, hosted CI for the final pushed revision, and fresh remote install/status verification remain pending. The prior push and install at commit 19939337 remain historical evidence. No tagged GitHub or registry release is implied.
 
 ## Documentation references
 
