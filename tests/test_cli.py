@@ -31,7 +31,7 @@ def make_project(path: Path, config: dict | str) -> Path:
     subprocess.run(["git", "config", "user.email", "factory@example.test"], cwd=path, check=True)
     subprocess.run(["git", "add", "-A"], cwd=path, check=True)
     subprocess.run(["git", "commit", "--quiet", "-m", "initial"], cwd=path, check=True)
-    return path
+    return path.resolve()
 
 
 def valid_config(marker: str) -> dict:
@@ -358,7 +358,7 @@ class CliDoctorStatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
             project = make_project(base / "consumer", "{not json")
-            config = base / "selected config.json"
+            config = (base / "selected config.json").resolve()
             config.write_text(json.dumps(valid_config("selected")), encoding="utf-8")
             output = io.StringIO()
             with patch.object(cli.shutil, "which", return_value="available"), contextlib.redirect_stdout(output):

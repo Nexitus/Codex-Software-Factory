@@ -525,10 +525,9 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_concurrent_api_submissions_are_fifo(self):
         with tempfile.TemporaryDirectory() as temp:
-            app = server.create_app(db_path=Path(temp) / "demo.sqlite3", demo=True, demo_delay=0)
-
             async def request_flow() -> None:
                 with patch.object(server.RunQueue, "_loop", lambda _self: None):
+                    app = server.create_app(db_path=Path(temp) / "demo.sqlite3", demo=True, demo_delay=0)
                     app.state.queue.start()
                     try:
                         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1:8765") as client:

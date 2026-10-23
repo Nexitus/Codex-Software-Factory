@@ -47,7 +47,7 @@ def ignored_factory_state(path: Path) -> bool:
 class ProjectSetupTests(unittest.TestCase):
     def test_init_minimal_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp) / "app"
+            root = (Path(temp) / "app").resolve()
             root.mkdir()
             init_git(root)
             (root / "README.md").write_bytes(b"project readme\r\n")
